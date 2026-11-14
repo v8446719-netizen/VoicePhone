@@ -344,8 +344,24 @@ object Calls {
         }, 800)
     }
 
+    /** Чёткий голос: микрофон включён и шумоподавление (где телефон его поддерживает). */
+    private fun clearVoice(ctx: Context) {
+        try {
+            val am = ctx.getSystemService(AudioManager::class.java)
+            am.isMicrophoneMute = false
+            for (p in listOf("noise_suppression=on", "ns_enable=1", "voice_ns=on", "fluence=on")) {
+                try {
+                    am.setParameters(p)
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     private fun onActive(call: Call, info: Info) {
         autoRecord(call, info)
+        app?.let { if (Prefs.clearVoice(it)) clearVoice(it) }
         val route = info.route ?: return
         // Аудио-режим переключается не мгновенно — несколько попыток подряд
         for (delay in longArrayOf(0, 350, 900, 1800)) {

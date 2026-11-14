@@ -154,7 +154,31 @@ object Repo {
     /** Ключ для сопоставления номеров: последние 10 цифр (8 999… и +7 999… дают одно и то же). */
     fun numKey(number: String): String = number.filter { it.isDigit() }.takeLast(10)
 
-    fun insertContact(c: Context, name: String, numbers: List<String>): Boolean {
+
+    private fun photoOps(ops: ArrayList<ContentProviderOperation>, raw: Long?, backRef: Int?, photo: ByteArray?, remove: Boolean) {
+        if (raw != null && (photo != null || remove)) {
+            ops.add(
+                ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                    .withSelection(
+                        "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                        arrayOf(raw.toString(), ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                    ).build()
+            )
+        }
+        if (photo != null) {
+            val b = ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+            if (raw != null) b.withValue(ContactsContract.Data.RAW_CONTACT_ID, raw)
+            else b.withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, backRef ?: 0)
+            ops.add(
+                b.withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, photo)
+                    .withValue(ContactsContract.Data.IS_SUPER_PRIMARY, 1)
+                    .build()
+            )
+        }
+    }
+
+    fun insertContact(c: Context, name: String, numbers: List<String>, photo: ByteArray? = null): Boolean {
         if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
         return try {
             val ops = ArrayList<ContentProviderOperation>()
@@ -181,6 +205,7 @@ object Repo {
                         .build()
                 )
             }
+            photoOps(ops, null, 0, photo, false)
             c.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
             true
         } catch (e: Exception) {
@@ -204,7 +229,7 @@ object Repo {
      * Сохраняет карточку: имя во всех склеенных контактах, номера — изменить / добавить / удалить.
      * [numbers]: пары (dataId существующего номера или -1 для нового, номер).
      */
-    fun saveContact(c: Context, old: Contact, name: String, numbers: List<Pair<Long, String>>): Boolean {
+    fun saveContact(c: Context, old: Contact, name: String, numbers: List<Pair<Long, String>>, photo: ByteArray? = null, removePhoto: Boolean = false): Boolean {
         if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
         val raw = firstRawContact(c, old.id) ?: return false
         return try {
@@ -252,6 +277,10 @@ object Repo {
                         .build()
                 )
             }
+            for (id in old.ids) {
+                if (removePhoto || (photo != null && id != old.id)) photoOps(ops, firstRawContact(c, id), null, null, true)
+            }
+            photoOps(ops, raw, null, photo, false)
             if (ops.isNotEmpty()) c.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
             true
         } catch (e: Exception) {

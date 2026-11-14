@@ -338,6 +338,10 @@ object Avatars {
     private val io = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
 
+    fun clear() {
+        cache.evictAll()
+    }
+
     fun load(ctx: Context, uri: String, px: Int, done: (Bitmap?) -> Unit) {
         val key = "$uri@$px"
         val hit = cache.get(key)

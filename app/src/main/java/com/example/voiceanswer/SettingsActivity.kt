@@ -167,7 +167,7 @@ class SettingsActivity : BaseActivity() {
         buildLook(col)
         buildHelp(col)
 
-        val about = Ui.text(a, "Голосовой телефон 3.4", 13f, Theme.sub)
+        val about = Ui.text(a, "Голосовой телефон 3.5", 13f, Theme.sub)
         about.gravity = Gravity.CENTER
         col.addView(about, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
@@ -205,6 +205,7 @@ class SettingsActivity : BaseActivity() {
         switchRow(c, "Озвучивать, кто звонит", "Телефон скажет «Звонит Мама» перед тем, как слушать вас", Prefs.K_ANNOUNCE)
         switchRow(c, "Громкая связь после ответа голосом", "Когда вы сказали «принять»", Prefs.K_SPEAKER_VOICE)
         switchRow(c, "Громкая связь после ответа кнопкой", "Когда ответили пальцем на экране", Prefs.K_SPEAKER_BUTTON)
+        switchRow(c, "Чёткий голос", "Включать микрофон и шумоподавление в начале разговора (если телефон это поддерживает)", Prefs.K_CLEAR_VOICE)
         switchRow(c, "Громкость на максимум", "На громкой связи ставить громкость разговора 100%", Prefs.K_MAX_VOLUME)
         switchRow(c, "Если подключены наушники", "Говорить через наушники, динамик не включать", Prefs.K_HEADSET_FIRST)
         switchRow(c, "Слушать команды через наушники", "Bluetooth-наушники: микрофон наушников (по возможности)", Prefs.K_HEADSET_MIC)

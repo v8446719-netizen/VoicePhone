@@ -30,6 +30,9 @@ class ContactEditActivity : BaseActivity() {
 
     private var contact: Contact? = null
     private lateinit var nameInput: EditText
+    private lateinit var avatarView: AvatarView
+    private var newPhoto: ByteArray? = null
+    private var photoRemoved = false
     private class NumRow(val dataId: Long, val edit: EditText, val view: View)
 
     private val numRows = ArrayList<NumRow>()
@@ -58,6 +61,56 @@ class ContactEditActivity : BaseActivity() {
         e.background = Ui.rounded(Theme.card, Ui.dpf(a, 18f))
         e.setPadding(Ui.dp(a, 18), Ui.dp(a, 15), Ui.dp(a, 18), Ui.dp(a, 15))
         return e
+    }
+
+    private fun photoSheet() {
+        Ui.sheet(this, "Фото контакта", null, listOf(
+            Triple(R.drawable.ic_person_add, "Выбрать из галереи") {
+                val i = Intent(Intent.ACTION_GET_CONTENT)
+                i.type = "image/*"
+                try {
+                    startActivityForResult(Intent.createChooser(i, "Фото"), 77)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Не нашёл галерею", Toast.LENGTH_SHORT).show()
+                }
+            },
+            Triple(R.drawable.ic_delete, "Убрать фото") {
+                newPhoto = null
+                photoRemoved = true
+                avatarView.bind(nameInput.text.toString(), null)
+            }
+        ))
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 77 || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+            val o = android.graphics.BitmapFactory.Options()
+            o.inJustDecodeBounds = true
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+            var sample = 1
+            while (o.outWidth / (sample * 2) >= 720 && o.outHeight / (sample * 2) >= 720) sample *= 2
+            val o2 = android.graphics.BitmapFactory.Options()
+            o2.inSampleSize = sample
+            val src = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o2) ?: return
+            // квадрат по центру, не больше 720 px
+            val side = minOf(src.width, src.height)
+            val sq = android.graphics.Bitmap.createBitmap(src, (src.width - side) / 2, (src.height - side) / 2, side, side)
+            val out = if (side > 720) android.graphics.Bitmap.createScaledBitmap(sq, 720, 720, true) else sq
+            val bos = java.io.ByteArrayOutputStream()
+            out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, bos)
+            newPhoto = bos.toByteArray()
+            photoRemoved = false
+            val f = java.io.File(cacheDir, "avatar_" + System.currentTimeMillis() + ".jpg")
+            f.writeBytes(newPhoto!!)
+            avatarView.bind(nameInput.text.toString(), Uri.fromFile(f).toString())
+        } catch (e: Exception) {
+            Toast.makeText(this, "Не удалось открыть фото", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun addNumberRow(dataId: Long, number: String) {
@@ -105,9 +158,16 @@ class ContactEditActivity : BaseActivity() {
         col.addView(top, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), -Ui.dp(a, 8), Ui.dp(a, 8), 0, Ui.dp(a, 8)))
 
         val avatar = AvatarView(a, Ui.dp(a, 110), 40f)
+        avatarView = avatar
         avatar.bind(c?.name, c?.photo)
-        col.addView(avatar, Ui.margins(Ui.lp(Ui.dp(a, 110), Ui.dp(a, 110)), 0, Ui.dp(a, 8), 0, Ui.dp(a, 20)))
+        avatar.isClickable = true
+        avatar.setOnClickListener { photoSheet() }
+        col.addView(avatar, Ui.margins(Ui.lp(Ui.dp(a, 110), Ui.dp(a, 110)), 0, Ui.dp(a, 8), 0, Ui.dp(a, 6)))
         (avatar.layoutParams as LinearLayout.LayoutParams).gravity = Gravity.CENTER_HORIZONTAL
+        val change = Ui.text(a, "Изменить фото", 14f, Theme.accent)
+        change.gravity = Gravity.CENTER
+        change.setOnClickListener { photoSheet() }
+        col.addView(change, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, 0, 0, Ui.dp(a, 16)))
 
         nameInput = input("Имя", c?.name ?: intent.getStringExtra(EXTRA_NAME).orEmpty(), false)
         col.addView(nameInput, Ui.lp(Ui.MATCH, Ui.WRAP))
@@ -182,8 +242,9 @@ class ContactEditActivity : BaseActivity() {
             return
         }
         val c = contact
-        val ok = if (c == null) Repo.insertContact(this, name, nums.map { it.second }) else Repo.saveContact(this, c, name, nums)
+        val ok = if (c == null) Repo.insertContact(this, name, nums.map { it.second }, newPhoto) else Repo.saveContact(this, c, name, nums, newPhoto, photoRemoved)
         if (ok) {
+            Avatars.clear()
             Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
             finish()
         } else {
