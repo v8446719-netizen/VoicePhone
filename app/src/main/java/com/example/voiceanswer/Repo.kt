@@ -1,10 +1,14 @@
 package com.example.voiceanswer
 
 import android.Manifest
+import android.content.ContentProviderOperation
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.CallLog
+import android.net.Uri
 import android.provider.ContactsContract
+import android.provider.ContactsContract.CommonDataKinds.Phone as P
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -23,7 +27,15 @@ class LogEntry(
     val title: String get() = if (!name.isNullOrBlank()) name else if (number.isNotBlank()) Calls.formatNumber(number) else "Неизвестный номер"
 }
 
-class Contact(val id: Long, val lookupKey: String?, val name: String, val number: String, val starred: Boolean)
+class Contact(
+    val id: Long,
+    val lookupKey: String?,
+    val name: String,
+    val number: String,
+    val starred: Boolean,
+    val photo: String?,
+    val dataId: Long
+)
 
 /** Чтение журнала звонков и контактов (нужны разрешения; без них просто пустые списки). */
 object Repo {
@@ -81,32 +93,128 @@ object Repo {
         }
     }
 
-    fun contacts(c: Context): List<Contact> {
+    private fun readContacts(c: Context, selection: String?, args: Array<String>?, all: Boolean): List<Contact> {
         if (!has(c, Manifest.permission.READ_CONTACTS)) return emptyList()
         val out = ArrayList<Contact>()
         val seen = HashSet<Long>()
         try {
             val proj = arrayOf(
-                ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
-                ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY,
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER,
-                ContactsContract.CommonDataKinds.Phone.STARRED
+                P.CONTACT_ID, P.LOOKUP_KEY, P.DISPLAY_NAME, P.NUMBER, P.STARRED, P.PHOTO_URI, P._ID
             )
             c.contentResolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI, proj, null, null,
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE LOCALIZED ASC"
+                P.CONTENT_URI, proj, selection, args, P.DISPLAY_NAME + " COLLATE LOCALIZED ASC"
             )?.use { cur ->
                 while (cur.moveToNext()) {
                     val id = cur.getLong(0)
-                    if (!seen.add(id)) continue
+                    if (!all && !seen.add(id)) continue
                     val name = cur.getString(2) ?: continue
-                    out.add(Contact(id, cur.getString(1), name, cur.getString(3).orEmpty(), cur.getInt(4) == 1))
+                    out.add(
+                        Contact(id, cur.getString(1), name, cur.getString(3).orEmpty(), cur.getInt(4) == 1, cur.getString(5), cur.getLong(6))
+                    )
                 }
             }
         } catch (_: Exception) {
         }
         return out
+    }
+
+    fun contacts(c: Context): List<Contact> = readContacts(c, null, null, false)
+
+    fun contact(c: Context, id: Long): Contact? =
+        readContacts(c, "${P.CONTACT_ID}=?", arrayOf(id.toString()), false).firstOrNull()
+
+    /** Ключ для сопоставления номеров: последние 10 цифр (8 999… и +7 999… дают одно и то же). */
+    fun numKey(number: String): String = number.filter { it.isDigit() }.takeLast(10)
+
+    fun insertContact(c: Context, name: String, number: String): Boolean {
+        if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
+        return try {
+            val ops = ArrayList<ContentProviderOperation>()
+            ops.add(
+                ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
+                    .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
+                    .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
+                    .build()
+            )
+            ops.add(
+                ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+                    .build()
+            )
+            ops.add(
+                ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                    .withValue(ContactsContract.Data.MIMETYPE, P.CONTENT_ITEM_TYPE)
+                    .withValue(P.NUMBER, number)
+                    .withValue(P.TYPE, P.TYPE_MOBILE)
+                    .build()
+            )
+            c.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun firstRawContact(c: Context, contactId: Long): Long? {
+        return try {
+            c.contentResolver.query(
+                ContactsContract.RawContacts.CONTENT_URI,
+                arrayOf(ContactsContract.RawContacts._ID),
+                "${ContactsContract.RawContacts.CONTACT_ID}=?", arrayOf(contactId.toString()), null
+            )?.use { if (it.moveToFirst()) it.getLong(0) else null }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun updateContact(c: Context, contactId: Long, phoneDataId: Long, name: String, number: String): Boolean {
+        if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
+        val raw = firstRawContact(c, contactId) ?: return false
+        return try {
+            val ops = ArrayList<ContentProviderOperation>()
+            ops.add(
+                ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
+                    .withSelection(
+                        "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                        arrayOf(raw.toString(), ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                    )
+                    .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+                    .build()
+            )
+            ops.add(
+                ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
+                    .withSelection("${ContactsContract.Data._ID}=?", arrayOf(phoneDataId.toString()))
+                    .withValue(P.NUMBER, number)
+                    .build()
+            )
+            c.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun deleteContact(c: Context, contactId: Long): Boolean {
+        if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
+        return try {
+            c.contentResolver.delete(Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId.toString()), null, null) > 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun setStarred(c: Context, contactId: Long, starred: Boolean): Boolean {
+        if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
+        return try {
+            val v = ContentValues()
+            v.put(ContactsContract.Contacts.STARRED, if (starred) 1 else 0)
+            c.contentResolver.update(Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId.toString()), v, null, null) > 0
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /** «12:30» сегодня, «Вчера», иначе «12.11». */

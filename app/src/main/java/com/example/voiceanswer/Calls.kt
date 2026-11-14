@@ -32,6 +32,7 @@ object Calls {
     class Info(val call: Call) {
         var number = ""
         var name: String? = null
+        var photo: String? = null
         var wasRinging = false
         var answeredByVoice = false
         var answeredHere = false
@@ -154,6 +155,7 @@ object Calls {
             if (cause == DisconnectCause.MISSED) CallNotifier.missed(ctx, title(info), info.number)
         }
         if (calls.none { it.state == Call.STATE_RINGING }) stopAnnounce()
+        if (calls.isEmpty()) Recorder.stop(ctx)
         CallNotifier.update(ctx)
         notifyChanged()
     }
@@ -176,13 +178,30 @@ object Calls {
             val number = d.handle?.schemeSpecificPart ?: ""
             if (number != info.number || info.name == null) {
                 info.number = number
-                info.name = lookupName(ctx, number)
+                val found = lookupContact(ctx, number)
+                info.name = found.first
+                info.photo = found.second
             }
             if (info.name == null) {
                 val shown = d.callerDisplayName
                 if (!shown.isNullOrBlank()) info.name = shown
             }
         } catch (_: Exception) {
+        }
+    }
+
+    /** Имя и фото контакта по номеру (null, если такого контакта нет). */
+    fun lookupContact(ctx: Context, number: String): Pair<String?, String?> {
+        if (number.isBlank()) return Pair(null, null)
+        if (ctx.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return Pair(null, null)
+        return try {
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
+            val proj = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME, ContactsContract.PhoneLookup.PHOTO_URI)
+            ctx.contentResolver.query(uri, proj, null, null, null)?.use {
+                if (it.moveToFirst()) Pair(it.getString(0), it.getString(1)) else Pair(null, null)
+            } ?: Pair(null, null)
+        } catch (e: Exception) {
+            Pair(null, null)
         }
     }
 
@@ -322,6 +341,45 @@ object Calls {
                     if (info.maxVolume) maxVoiceVolume()
                 }
             }, delay)
+        }
+    }
+
+    // ------------------------------------------------------------------ несколько звонков
+
+    /** Звонок на удержании, пока идёт другой. */
+    fun held(): Call? {
+        val p = primary()
+        return calls.firstOrNull { it != p && it.state == Call.STATE_HOLDING }
+    }
+
+    fun otherCall(): Call? {
+        val p = primary()
+        return calls.firstOrNull { it != p }
+    }
+
+    /** Переключиться на звонок, который стоит на удержании (текущий уйдёт на удержание сам). */
+    fun swap() {
+        try {
+            held()?.unhold()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun canMerge(): Boolean {
+        val p = primary() ?: return false
+        return try {
+            calls.size >= 2 && p.details.can(Call.Details.CAPABILITY_MERGE_CONFERENCE)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun merge() {
+        val p = primary() ?: return
+        val o = otherCall() ?: return
+        try {
+            p.conference(o)
+        } catch (_: Exception) {
         }
     }
 

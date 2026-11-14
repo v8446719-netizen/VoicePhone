@@ -148,22 +148,6 @@ object Ui {
         d.show()
     }
 
-    fun avatar(c: Context, name: String?, sizeDp: Int, textSp: Float): FrameLayout {
-        val f = FrameLayout(c)
-        f.background = oval(Theme.avatarColor(name))
-        val ini = Logic.initials(name)
-        if (ini.isEmpty()) {
-            f.addView(icon(c, R.drawable.ic_person, Color.WHITE),
-                FrameLayout.LayoutParams(dp(c, sizeDp / 2), dp(c, sizeDp / 2), Gravity.CENTER))
-        } else {
-            val t = text(c, ini, textSp, Color.WHITE, true)
-            t.gravity = Gravity.CENTER
-            f.addView(t, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
-        }
-        f.layoutParams = LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp))
-        return f
-    }
-
     fun setVisible(v: View, visible: Boolean) {
         v.visibility = if (visible) View.VISIBLE else View.GONE
     }

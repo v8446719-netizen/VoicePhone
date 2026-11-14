@@ -2,23 +2,30 @@ package com.example.voiceanswer
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.RectF
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.util.LruCache
 import android.view.MotionEvent
+import android.view.ViewOutlineProvider
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -203,7 +210,7 @@ class EqualizerView(c: Context) : View(c) {
 }
 
 /** Круглая кнопка с подписью для экрана разговора. Включённое состояние — цветное. */
-class ControlButton(c: Context, private val iconRes: Int, label: String) : LinearLayout(c) {
+class ControlButton(c: Context, private val iconRes: Int, label: String, sizeDp: Int = 66) : LinearLayout(c) {
     private val circle = FrameLayout(c)
     private val img = ImageView(c)
     private val caption = TextView(c)
@@ -212,11 +219,11 @@ class ControlButton(c: Context, private val iconRes: Int, label: String) : Linea
     init {
         orientation = VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
-        val size = Ui.dp(c, 66)
+        val size = Ui.dp(c, sizeDp)
         circle.addView(img, FrameLayout.LayoutParams(Ui.dp(c, 28), Ui.dp(c, 28), Gravity.CENTER))
         addView(circle, LayoutParams(size, size))
         caption.text = label
-        caption.textSize = 13f
+        caption.textSize = 12f
         caption.gravity = Gravity.CENTER
         addView(caption, LayoutParams(Ui.WRAP, Ui.WRAP).also { it.topMargin = Ui.dp(c, 6) })
         isClickable = true
@@ -313,5 +320,84 @@ class KeypadView(
             }
         }
         return box
+    }
+}
+
+/** Загрузка фотографий контактов с кэшем. */
+object Avatars {
+    private val cache = LruCache<String, Bitmap>(60)
+    private val io = Executors.newFixedThreadPool(2)
+    private val main = Handler(Looper.getMainLooper())
+
+    fun load(ctx: Context, uri: String, px: Int, done: (Bitmap?) -> Unit) {
+        val key = "$uri@$px"
+        val hit = cache.get(key)
+        if (hit != null) {
+            done(hit)
+            return
+        }
+        val app = ctx.applicationContext
+        io.execute {
+            var bmp: Bitmap? = null
+            try {
+                val bytes = app.contentResolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
+                if (bytes != null) {
+                    val o = BitmapFactory.Options()
+                    o.inJustDecodeBounds = true
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+                    var sample = 1
+                    while (o.outWidth / (sample * 2) >= px && o.outHeight / (sample * 2) >= px) sample *= 2
+                    val o2 = BitmapFactory.Options()
+                    o2.inSampleSize = sample
+                    bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o2)
+                }
+            } catch (_: Exception) {
+            }
+            if (bmp != null) cache.put(key, bmp)
+            main.post { done(bmp) }
+        }
+    }
+}
+
+/** Круглая аватарка: фото контакта, а если его нет — буквы имени на цветном фоне. */
+class AvatarView(c: Context, private val sizePx: Int, textSp: Float) : FrameLayout(c) {
+    private val label = TextView(c)
+    private val icon = ImageView(c)
+    private val photo = ImageView(c)
+    private var current: String? = null
+
+    init {
+        clipToOutline = true
+        outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+        label.gravity = Gravity.CENTER
+        label.setTextColor(Color.WHITE)
+        label.textSize = textSp
+        label.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        addView(label, LayoutParams(Ui.MATCH, Ui.MATCH))
+        icon.setImageResource(R.drawable.ic_person)
+        icon.setColorFilter(Color.WHITE)
+        addView(icon, LayoutParams(sizePx / 2, sizePx / 2, Gravity.CENTER))
+        photo.scaleType = ImageView.ScaleType.CENTER_CROP
+        addView(photo, LayoutParams(Ui.MATCH, Ui.MATCH))
+        layoutParams = LinearLayout.LayoutParams(sizePx, sizePx)
+    }
+
+    fun bind(name: String?, photoUri: String?) {
+        background = Ui.oval(Theme.avatarColor(name))
+        val ini = Logic.initials(name)
+        label.text = ini
+        label.visibility = if (ini.isEmpty()) View.GONE else View.VISIBLE
+        icon.visibility = if (ini.isEmpty()) View.VISIBLE else View.GONE
+        photo.setImageDrawable(null)
+        current = photoUri
+        if (!photoUri.isNullOrEmpty()) {
+            Avatars.load(context, photoUri, sizePx) { bmp ->
+                if (current == photoUri && bmp != null) photo.setImageBitmap(bmp)
+            }
+        }
     }
 }

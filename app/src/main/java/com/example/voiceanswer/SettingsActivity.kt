@@ -157,7 +157,7 @@ class SettingsActivity : BaseActivity() {
         buildLook(col)
         buildHelp(col)
 
-        val about = Ui.text(a, "Голосовой телефон 3.0", 13f, Theme.sub)
+        val about = Ui.text(a, "Голосовой телефон 3.1", 13f, Theme.sub)
         about.gravity = Gravity.CENTER
         col.addView(about, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
@@ -208,6 +208,10 @@ class SettingsActivity : BaseActivity() {
         wordsBlock(c, true)
         label(c, "ОТКЛОНИТЬ ЗВОНОК")
         wordsBlock(c, false)
+        c.addView(
+            Ui.text(a, "Если телефон слышит вместо «принять» другое слово (например «привет»), просто добавьте его в список «Принять».", 13f, Theme.sub),
+            Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 14), 0, 0)
+        )
         c.addView(softPill("Вернуть стандартные слова") {
             Prefs.resetWords(a)
             rebuild()
@@ -374,7 +378,26 @@ class SettingsActivity : BaseActivity() {
             c.addView(bar, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 12), 0, 0))
         }
 
-        label(c, "ФОН")
+        label(c, "ЭКРАН ЗВОНКА")
+        val callRow = LinearLayout(a)
+        callRow.orientation = LinearLayout.HORIZONTAL
+        for ((id, name) in listOf("dark" to "Тёмный", "black" to "Чёрный", "bright" to "Яркий")) {
+            val sel = Prefs.callBg(a) == id
+            val t = Ui.text(a, name, 15f, if (sel) Color.WHITE else Theme.text, sel)
+            t.gravity = Gravity.CENTER
+            t.setPadding(Ui.dp(a, 8), Ui.dp(a, 11), Ui.dp(a, 8), Ui.dp(a, 11))
+            val fill = if (sel) Ui.accentFill(Ui.dpf(a, 20f)) else Ui.rounded(Theme.card2, Ui.dpf(a, 20f))
+            t.background = Ui.ripple(fill, Ui.dpf(a, 20f))
+            t.isClickable = true
+            t.setOnClickListener {
+                Prefs.setCallBg(a, id)
+                rebuild()
+            }
+            callRow.addView(t, Ui.margins(Ui.lp(0, Ui.WRAP, 1f), 0, 0, Ui.dp(a, 8), 0))
+        }
+        c.addView(callRow, Ui.lp(Ui.MATCH, Ui.WRAP))
+
+        label(c, "ФОН ПРИЛОЖЕНИЯ")
         val row = LinearLayout(a)
         row.orientation = LinearLayout.HORIZONTAL
         for ((id, name) in listOf("black" to "Чёрный", "dark" to "Тёмный", "light" to "Светлый")) {

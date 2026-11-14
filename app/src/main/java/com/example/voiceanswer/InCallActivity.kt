@@ -5,6 +5,7 @@ package com.example.voiceanswer
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.animation.ValueAnimator
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -14,12 +15,16 @@ import android.os.Looper
 import android.os.PowerManager
 import android.telecom.Call
 import android.telecom.CallAudioState
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 
 /** Экран звонка: входящий (с голосовым управлением), исходящий и разговор. */
 class InCallActivity : BaseActivity(), Calls.Listener {
@@ -34,11 +39,14 @@ class InCallActivity : BaseActivity(), Calls.Listener {
     private var dtmfText = ""
     private var silenced = false
     private var commandSent = false
+    private var avatarKey: String? = "?"
+    private var sc = 1f
 
     private lateinit var root: FrameLayout
     private lateinit var chip: TextView
     private lateinit var pulse: PulseView
-    private lateinit var avatarHolder: FrameLayout
+    private lateinit var avatarFrame: FrameLayout
+    private lateinit var avatar: AvatarView
     private lateinit var nameTv: TextView
     private lateinit var numberTv: TextView
     private lateinit var statusTv: TextView
@@ -51,17 +59,22 @@ class InCallActivity : BaseActivity(), Calls.Listener {
     private lateinit var quietBtn: TextView
     private lateinit var ringButtons: LinearLayout
     private lateinit var acceptBtn: View
+    private lateinit var endBox: LinearLayout
     private lateinit var activeBox: LinearLayout
+    private lateinit var row1: LinearLayout
+    private lateinit var row2: LinearLayout
+    private lateinit var row3: LinearLayout
     private lateinit var keypadBox: LinearLayout
-    private lateinit var row2Box: LinearLayout
-    private lateinit var avatarFrame: FrameLayout
     private lateinit var dtmfTv: TextView
     private lateinit var bMute: ControlButton
     private lateinit var bKeypad: ControlButton
     private lateinit var bSpeaker: ControlButton
     private lateinit var bHold: ControlButton
+    private lateinit var bRecord: ControlButton
+    private lateinit var bAdd: ControlButton
     private lateinit var bHeadset: ControlButton
-    private var currentAvatarKey: String? = "?"
+    private lateinit var bMerge: ControlButton
+    private lateinit var bSwap: ControlButton
 
     private val timer = object : Runnable {
         override fun run() {
@@ -76,13 +89,19 @@ class InCallActivity : BaseActivity(), Calls.Listener {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
         } else {
-            @Suppress("DEPRECATION")
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                     WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val hdp = resources.configuration.screenHeightDp
+        sc = when {
+            hdp < 620 -> 0.66f
+            hdp < 700 -> 0.78f
+            hdp < 780 -> 0.9f
+            else -> 1f
+        }
         buildUi()
         try {
             val pm = getSystemService(PowerManager::class.java)
@@ -96,40 +115,56 @@ class InCallActivity : BaseActivity(), Calls.Listener {
 
     // ------------------------------------------------------------------ интерфейс
 
+    private fun s(v: Int): Int = Ui.dp(this, (v * sc).toInt())
+
     private fun buildUi() {
         val a = this
         root = FrameLayout(a)
         onAccent { accent ->
-            val top = Theme.mix(accent, Color.BLACK, 0.55f)
-            val g = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, 0xFF050508.toInt()))
-            root.background = g
+            val mode = Prefs.callBg(a)
+            val top = when (mode) {
+                "black" -> 0xFF000000.toInt()
+                "bright" -> Theme.mix(accent, Color.BLACK, 0.55f)
+                else -> Theme.mix(accent, Color.BLACK, 0.84f)
+            }
+            val bottom = if (mode == "black") 0xFF000000.toInt() else 0xFF050508.toInt()
+            root.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bottom))
             window.statusBarColor = top
-            window.navigationBarColor = 0xFF050508.toInt()
+            window.navigationBarColor = bottom
         }
 
+        val outer = LinearLayout(a)
+        outer.orientation = LinearLayout.VERTICAL
+        root.addView(outer, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
+
+        // Прокручиваемая середина
+        val scroll = ScrollView(a)
+        scroll.isVerticalScrollBarEnabled = false
+        scroll.isFillViewport = true
         val col = LinearLayout(a)
         col.orientation = LinearLayout.VERTICAL
         col.gravity = Gravity.CENTER_HORIZONTAL
-        col.setPadding(Ui.dp(a, 24), Ui.dp(a, 20), Ui.dp(a, 24), Ui.dp(a, 24))
-        root.addView(col, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
+        col.setPadding(Ui.dp(a, 24), Ui.dp(a, 16), Ui.dp(a, 24), Ui.dp(a, 8))
+        scroll.addView(col, FrameLayout.LayoutParams(Ui.MATCH, Ui.WRAP))
+        outer.addView(scroll, Ui.lp(Ui.MATCH, 0, 1f))
 
         chip = Ui.text(a, "Входящий вызов", 14f, Color.WHITE)
         chip.setPadding(Ui.dp(a, 16), Ui.dp(a, 7), Ui.dp(a, 16), Ui.dp(a, 7))
         chip.background = Ui.rounded(0x26FFFFFF, Ui.dpf(a, 20f))
         col.addView(chip, Ui.lp(Ui.WRAP, Ui.WRAP))
 
-        // Аватарка с расходящимися кругами
+        // Аватарка (фото контакта) с расходящимися кругами
         avatarFrame = FrameLayout(a)
         pulse = PulseView(a)
         avatarFrame.addView(pulse, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
-        avatarHolder = FrameLayout(a)
-        avatarFrame.addView(avatarHolder, FrameLayout.LayoutParams(Ui.dp(a, 116), Ui.dp(a, 116), Gravity.CENTER))
-        col.addView(avatarFrame, Ui.margins(Ui.lp(Ui.dp(a, 230), Ui.dp(a, 230)), 0, Ui.dp(a, 8), 0, 0))
+        avatar = AvatarView(a, s(116), 44f * sc)
+        avatarFrame.addView(avatar, FrameLayout.LayoutParams(s(116), s(116), Gravity.CENTER))
+        col.addView(avatarFrame, Ui.margins(Ui.lp(s(230), s(230)), 0, Ui.dp(a, 6), 0, 0))
 
-        nameTv = Ui.text(a, "", 32f, Color.WHITE, true)
+        nameTv = Ui.text(a, "", 32f * sc, Color.WHITE, true)
         nameTv.gravity = Gravity.CENTER
         nameTv.maxLines = 2
-        nameTv.ellipsize = android.text.TextUtils.TruncateAt.END
+        nameTv.ellipsize = TextUtils.TruncateAt.END
         col.addView(nameTv, Ui.lp(Ui.MATCH, Ui.WRAP))
 
         numberTv = Ui.text(a, "", 17f, 0xB3FFFFFF.toInt())
@@ -138,7 +173,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
 
         statusTv = Ui.text(a, "", 19f, Color.WHITE)
         statusTv.gravity = Gravity.CENTER
-        col.addView(statusTv, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
+        col.addView(statusTv, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 8), 0, 0))
 
         routeTv = Ui.text(a, "", 14f, 0x99FFFFFF.toInt())
         routeTv.gravity = Gravity.CENTER
@@ -148,17 +183,17 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         voiceCard = LinearLayout(a)
         voiceCard.orientation = LinearLayout.HORIZONTAL
         voiceCard.gravity = Gravity.CENTER_VERTICAL
-        voiceCard.setPadding(Ui.dp(a, 16), Ui.dp(a, 12), Ui.dp(a, 12), Ui.dp(a, 12))
+        voiceCard.setPadding(Ui.dp(a, 16), Ui.dp(a, 10), Ui.dp(a, 12), Ui.dp(a, 10))
         voiceCard.background = Ui.rounded(0x1FFFFFFF, Ui.dpf(a, 22f))
         val textCol = LinearLayout(a)
         textCol.orientation = LinearLayout.VERTICAL
         voiceTitle = Ui.text(a, "", 15f, Color.WHITE, true)
         heardTv = Ui.text(a, "", 13f, 0xB3FFFFFF.toInt())
         heardTv.maxLines = 1
-        heardTv.ellipsize = android.text.TextUtils.TruncateAt.END
+        heardTv.ellipsize = TextUtils.TruncateAt.END
         eq = EqualizerView(a)
         textCol.addView(voiceTitle, Ui.lp(Ui.MATCH, Ui.WRAP))
-        textCol.addView(eq, Ui.margins(Ui.lp(Ui.dp(a, 110), Ui.dp(a, 26)), 0, Ui.dp(a, 4), 0, Ui.dp(a, 2)))
+        textCol.addView(eq, Ui.margins(Ui.lp(Ui.dp(a, 110), Ui.dp(a, 24)), 0, Ui.dp(a, 4), 0, Ui.dp(a, 2)))
         textCol.addView(heardTv, Ui.lp(Ui.MATCH, Ui.WRAP))
         voiceCard.addView(textCol, Ui.lp(0, Ui.WRAP, 1f))
         micToggle = Ui.roundButton(a, 46, Ui.oval(0x33FFFFFF), R.drawable.ic_mic, Color.WHITE, 22)
@@ -167,10 +202,10 @@ class InCallActivity : BaseActivity(), Calls.Listener {
             render()
         }
         voiceCard.addView(micToggle)
-        col.addView(voiceCard, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 18), 0, 0))
+        col.addView(voiceCard, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 14), 0, 0))
 
         quietBtn = Ui.text(a, "Заглушить звонок", 14f, 0xCCFFFFFF.toInt())
-        quietBtn.setPadding(Ui.dp(a, 16), Ui.dp(a, 10), Ui.dp(a, 16), Ui.dp(a, 10))
+        quietBtn.setPadding(Ui.dp(a, 16), Ui.dp(a, 9), Ui.dp(a, 16), Ui.dp(a, 9))
         quietBtn.background = Ui.ripple(Ui.rounded(0x00000000, Ui.dpf(a, 20f)), Ui.dpf(a, 20f))
         quietBtn.isClickable = true
         quietBtn.setOnClickListener {
@@ -178,7 +213,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
             silenced = true
             quietBtn.visibility = View.GONE
         }
-        col.addView(quietBtn, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), 0, Ui.dp(a, 6), 0, 0))
+        col.addView(quietBtn, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), 0, Ui.dp(a, 4), 0, 0))
 
         // Клавиатура (тональный набор) — скрыта, пока не нажата кнопка
         keypadBox = LinearLayout(a)
@@ -187,10 +222,10 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         dtmfTv = Ui.light(a, "", 28f, Color.WHITE)
         dtmfTv.gravity = Gravity.CENTER
         dtmfTv.maxLines = 1
-        dtmfTv.ellipsize = android.text.TextUtils.TruncateAt.START
+        dtmfTv.ellipsize = TextUtils.TruncateAt.START
         keypadBox.addView(dtmfTv, Ui.lp(Ui.MATCH, Ui.WRAP))
         keypadBox.addView(
-            KeypadView(a, 58, Color.WHITE, 0x26FFFFFF,
+            KeypadView(a, if (sc < 0.8f) 50 else 58, Color.WHITE, 0x26FFFFFF,
                 onDown = { ch ->
                     dtmfText += ch
                     dtmfTv.text = dtmfText
@@ -208,12 +243,61 @@ class InCallActivity : BaseActivity(), Calls.Listener {
             Ui.lp(Ui.WRAP, Ui.WRAP)
         )
         keypadBox.visibility = View.GONE
-        col.addView(keypadBox, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 8), 0, 0))
+        col.addView(keypadBox, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 6), 0, 0))
 
-        // Растяжка
-        col.addView(View(a), Ui.lp(Ui.MATCH, 0, 1f))
+        // Кнопки разговора
+        activeBox = LinearLayout(a)
+        activeBox.orientation = LinearLayout.VERTICAL
+        activeBox.gravity = Gravity.CENTER_HORIZONTAL
+        val cs = if (sc < 0.8f) 54 else 62
 
-        // Кнопки входящего: отклонить / принять
+        bMute = ControlButton(a, R.drawable.ic_mic_off, "Микрофон", cs)
+        bMute.setOnClickListener { Calls.setMuted(!Calls.isMuted()) }
+        bKeypad = ControlButton(a, R.drawable.ic_dialpad, "Клавиши", cs)
+        bKeypad.setOnClickListener { toggleKeypad() }
+        bSpeaker = ControlButton(a, R.drawable.ic_volume_up, "Динамик", cs)
+        bSpeaker.setOnClickListener { Calls.setSpeaker(!Calls.isSpeakerOn(), a) }
+        bHold = ControlButton(a, R.drawable.ic_pause, "Пауза", cs)
+        bHold.setOnClickListener {
+            val c = Calls.primary() ?: return@setOnClickListener
+            try {
+                if (c.state == Call.STATE_HOLDING) c.unhold() else c.hold()
+            } catch (_: Exception) {
+            }
+        }
+        bRecord = ControlButton(a, R.drawable.ic_mic, "Запись", cs)
+        bRecord.setOnClickListener { toggleRecord() }
+        bAdd = ControlButton(a, R.drawable.ic_add, "Добавить", cs)
+        bAdd.setOnClickListener {
+            val i = Intent(a, MainActivity::class.java)
+            i.action = Intent.ACTION_DIAL
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+        }
+        bHeadset = ControlButton(a, R.drawable.ic_headset, "Наушники", cs)
+        bHeadset.setOnClickListener {
+            val route = Calls.audioState?.route
+            val kind = Calls.headsetKind(a)
+            val target = if (kind == Calls.Headset.BLUETOOTH) CallAudioState.ROUTE_BLUETOOTH else CallAudioState.ROUTE_WIRED_HEADSET
+            if (route == target) Calls.setRoute(CallAudioState.ROUTE_EARPIECE) else Calls.setRoute(target)
+        }
+        bMerge = ControlButton(a, R.drawable.ic_call, "Объединить", cs)
+        bMerge.setOnClickListener { Calls.merge() }
+        bSwap = ControlButton(a, R.drawable.ic_call_received, "Переключить", cs)
+        bSwap.setOnClickListener { Calls.swap() }
+
+        row1 = rowOf(bMute, bKeypad, bSpeaker)
+        row2 = rowOf(bHold, bRecord, bAdd)
+        row3 = rowOf(bHeadset, bMerge, bSwap)
+        activeBox.addView(row1, Ui.lp(Ui.MATCH, Ui.WRAP))
+        activeBox.addView(row2, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
+        activeBox.addView(row3, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
+        col.addView(activeBox, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 14), 0, 0))
+
+        // Закреплённый низ: кнопки всегда на экране
+        val bottom = FrameLayout(a)
+        bottom.setPadding(Ui.dp(a, 24), Ui.dp(a, 6), Ui.dp(a, 24), Ui.dp(a, 18))
+
         ringButtons = LinearLayout(a)
         ringButtons.orientation = LinearLayout.HORIZONTAL
         ringButtons.gravity = Gravity.CENTER
@@ -222,53 +306,23 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         acceptBtn = accept.getChildAt(0)
         ringButtons.addView(decline, Ui.lp(0, Ui.WRAP, 1f))
         ringButtons.addView(accept, Ui.lp(0, Ui.WRAP, 1f))
-        col.addView(ringButtons, Ui.lp(Ui.MATCH, Ui.WRAP))
+        bottom.addView(ringButtons, FrameLayout.LayoutParams(Ui.MATCH, Ui.WRAP))
 
-        // Кнопки разговора
-        activeBox = LinearLayout(a)
-        activeBox.orientation = LinearLayout.VERTICAL
-        activeBox.gravity = Gravity.CENTER_HORIZONTAL
-
-        bMute = ControlButton(a, R.drawable.ic_mic_off, "Микрофон")
-        bMute.setOnClickListener { Calls.setMuted(!Calls.isMuted()) }
-        bKeypad = ControlButton(a, R.drawable.ic_dialpad, "Клавиши")
-        bKeypad.setOnClickListener { toggleKeypad() }
-        bSpeaker = ControlButton(a, R.drawable.ic_volume_up, "Динамик")
-        bSpeaker.setOnClickListener { Calls.setSpeaker(!Calls.isSpeakerOn(), a) }
-        bHold = ControlButton(a, R.drawable.ic_pause, "Пауза")
-        bHold.setOnClickListener {
-            val c = Calls.primary() ?: return@setOnClickListener
-            try {
-                if (c.state == Call.STATE_HOLDING) c.unhold() else c.hold()
-            } catch (_: Exception) {
-            }
-        }
-        bHeadset = ControlButton(a, R.drawable.ic_headset, "Наушники")
-        bHeadset.setOnClickListener {
-            val route = Calls.audioState?.route
-            val kind = Calls.headsetKind(a)
-            val target = if (kind == Calls.Headset.BLUETOOTH) CallAudioState.ROUTE_BLUETOOTH else CallAudioState.ROUTE_WIRED_HEADSET
-            if (route == target) Calls.setRoute(CallAudioState.ROUTE_EARPIECE) else Calls.setRoute(target)
-        }
-
-        val row1 = LinearLayout(a)
-        row1.orientation = LinearLayout.HORIZONTAL
-        row1.gravity = Gravity.CENTER
-        for (b in listOf(bMute, bKeypad, bSpeaker)) row1.addView(b, Ui.lp(0, Ui.WRAP, 1f))
-        val row2 = LinearLayout(a)
-        row2Box = row2
-        row2.orientation = LinearLayout.HORIZONTAL
-        row2.gravity = Gravity.CENTER
-        row2.addView(bHold, Ui.lp(0, Ui.WRAP, 1f))
-        row2.addView(bHeadset, Ui.lp(0, Ui.WRAP, 1f))
-        row2.addView(View(a), Ui.lp(0, 1, 1f))
-        activeBox.addView(row1, Ui.lp(Ui.MATCH, Ui.WRAP))
-        activeBox.addView(row2, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 14), 0, 0))
-        val end = bigAction(R.drawable.ic_call_end, Theme.RED, "") { Calls.hangup() }
-        activeBox.addView(end, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), 0, Ui.dp(a, 22), 0, 0))
-        col.addView(activeBox, Ui.lp(Ui.MATCH, Ui.WRAP))
+        endBox = bigAction(R.drawable.ic_call_end, Theme.RED, "") { Calls.hangup() }
+        bottom.addView(endBox, FrameLayout.LayoutParams(Ui.WRAP, Ui.WRAP, Gravity.CENTER_HORIZONTAL))
+        outer.addView(bottom, Ui.lp(Ui.MATCH, Ui.WRAP))
 
         setContentView(root)
+    }
+
+    private fun rowOf(x: ControlButton, y: ControlButton, z: ControlButton): LinearLayout {
+        val r = LinearLayout(this)
+        r.orientation = LinearLayout.HORIZONTAL
+        r.gravity = Gravity.CENTER
+        r.addView(x, Ui.lp(0, Ui.WRAP, 1f))
+        r.addView(y, Ui.lp(0, Ui.WRAP, 1f))
+        r.addView(z, Ui.lp(0, Ui.WRAP, 1f))
+        return r
     }
 
     /** Большая круглая кнопка с подписью. Первый дочерний элемент — сама кнопка. */
@@ -277,11 +331,12 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         val box = LinearLayout(a)
         box.orientation = LinearLayout.VERTICAL
         box.gravity = Gravity.CENTER_HORIZONTAL
-        val btn = Ui.roundButton(a, 76, Ui.oval(color), iconRes, Color.WHITE, 34)
+        val size = if (sc < 0.8f) 66 else 76
+        val btn = Ui.roundButton(a, size, Ui.oval(color), iconRes, Color.WHITE, 34)
         btn.setOnClickListener { onClick() }
         box.addView(btn)
         if (label.isNotEmpty()) {
-            box.addView(Ui.text(a, label, 14f, 0xCCFFFFFF.toInt()), Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), 0, Ui.dp(a, 8), 0, 0))
+            box.addView(Ui.text(a, label, 14f, 0xCCFFFFFF.toInt()), Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), 0, Ui.dp(a, 6), 0, 0))
         }
         return box
     }
@@ -290,13 +345,29 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         val show = keypadBox.visibility != View.VISIBLE
         keypadBox.visibility = if (show) View.VISIBLE else View.GONE
         avatarFrame.visibility = if (show) View.GONE else View.VISIBLE
-        row2Box.visibility = if (show) View.GONE else View.VISIBLE
+        row2.visibility = if (show) View.GONE else View.VISIBLE
+        row3.visibility = if (show) View.GONE else row3.visibility
         numberTv.visibility = if (show || numberTv.text.isNullOrEmpty()) View.GONE else View.VISIBLE
         bKeypad.setActive(show)
         if (!show) {
             dtmfText = ""
             dtmfTv.text = ""
         }
+    }
+
+    private fun toggleRecord() {
+        if (Recorder.active) {
+            Recorder.stop(this)
+        } else {
+            val err = Recorder.start(this)
+            if (err != null) {
+                Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+            } else if (Recorder.micOnly) {
+                Calls.setSpeaker(true, this)
+                Toast.makeText(this, "Запись идёт через микрофон — включена громкая связь, чтобы слышать собеседника", Toast.LENGTH_LONG).show()
+            }
+        }
+        render()
     }
 
     // ------------------------------------------------------------------ жизненный цикл
@@ -309,7 +380,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         ui.post(timer)
     }
 
-    override fun onNewIntent(intent: android.content.Intent?) {
+    override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
         finishScheduled = false
@@ -353,6 +424,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
             statusTv.text = "Звонок завершён"
             chip.text = "Завершён"
             ringButtons.visibility = View.GONE
+            endBox.visibility = View.GONE
             activeBox.visibility = View.GONE
             voiceCard.visibility = View.GONE
             quietBtn.visibility = View.GONE
@@ -372,7 +444,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         nameTv.text = Calls.title(info)
         numberTv.text = Calls.subtitle(info)
         numberTv.visibility = if (keypadBox.visibility == View.VISIBLE || numberTv.text.isNullOrEmpty()) View.GONE else View.VISIBLE
-        updateAvatar(info?.name)
+        updateAvatar(info?.name, info?.photo)
 
         val ringing = call.state == Call.STATE_RINGING
         val active = call.state == Call.STATE_ACTIVE
@@ -380,7 +452,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
 
         when (call.state) {
             Call.STATE_RINGING -> {
-                chip.text = "Входящий вызов"
+                chip.text = if (Calls.calls.size > 1) "Второй вызов" else "Входящий вызов"
                 statusTv.text = if (Calls.announcing) "Озвучиваю звонок…" else "звонит…"
             }
             Call.STATE_ACTIVE -> {
@@ -403,22 +475,35 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         }
 
         ringButtons.visibility = if (ringing) View.VISIBLE else View.GONE
+        endBox.visibility = if (ringing) View.GONE else View.VISIBLE
         activeBox.visibility = if (ringing) View.GONE else View.VISIBLE
         if (ringing && keypadBox.visibility == View.VISIBLE) toggleKeypad()
         pulse.running = ringing
         if (ringing) pulse.postInvalidateOnAnimation()
         startAcceptPulse(ringing)
 
-        // Быстрые кнопки
+        // Кнопки разговора
         bMute.setActive(Calls.isMuted())
         bSpeaker.setActive(Calls.isSpeakerOn())
         bHold.setActive(holding)
         bHold.setLabel(if (holding) "Продолжить" else "Пауза")
+        bRecord.setActive(Recorder.active)
+        bRecord.setLabel(if (Recorder.active) "Идёт запись" else "Запись")
         val headset = Calls.headsetKind(this)
-        bHeadset.visibility = if (headset == Calls.Headset.NONE) View.INVISIBLE else View.VISIBLE
         val rt = Calls.audioState?.route
+        bHeadset.visibility = if (headset == Calls.Headset.NONE) View.INVISIBLE else View.VISIBLE
         bHeadset.setActive(rt == CallAudioState.ROUTE_BLUETOOTH || rt == CallAudioState.ROUTE_WIRED_HEADSET)
-        routeTv.text = if (ringing) "" else Calls.routeName()
+        val heldCall = Calls.held()
+        bSwap.visibility = if (heldCall != null) View.VISIBLE else View.INVISIBLE
+        bMerge.visibility = if (Calls.canMerge()) View.VISIBLE else View.INVISIBLE
+        if (keypadBox.visibility != View.VISIBLE) {
+            row3.visibility = if (headset != Calls.Headset.NONE || heldCall != null || Calls.canMerge()) View.VISIBLE else View.GONE
+        }
+        routeTv.text = when {
+            ringing -> ""
+            heldCall != null -> "На удержании: " + Calls.title(Calls.info(heldCall))
+            else -> Calls.routeName()
+        }
         if (!ringing) {
             silenced = false
             commandSent = false
@@ -429,20 +514,11 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         updateProximity(active || call.state == Call.STATE_DIALING)
     }
 
-    private fun updateAvatar(key: String?) {
-        if (key == currentAvatarKey) return
-        currentAvatarKey = key
-        avatarHolder.removeAllViews()
-        avatarHolder.background = Ui.oval(Theme.avatarColor(key))
-        val ini = Logic.initials(key)
-        if (ini.isEmpty()) {
-            val icon = Ui.icon(this, R.drawable.ic_person, Color.WHITE)
-            avatarHolder.addView(icon, FrameLayout.LayoutParams(Ui.dp(this, 58), Ui.dp(this, 58), Gravity.CENTER))
-        } else {
-            val t = Ui.text(this, ini, 44f, Color.WHITE, true)
-            t.gravity = Gravity.CENTER
-            avatarHolder.addView(t, FrameLayout.LayoutParams(Ui.WRAP, Ui.WRAP, Gravity.CENTER))
-        }
+    private fun updateAvatar(name: String?, photo: String?) {
+        val key = (name ?: "") + "|" + (photo ?: "")
+        if (key == avatarKey) return
+        avatarKey = key
+        avatar.bind(name, photo)
     }
 
     private fun startAcceptPulse(ringing: Boolean) {
@@ -469,13 +545,14 @@ class InCallActivity : BaseActivity(), Calls.Listener {
     // ------------------------------------------------------------------ голос
 
     private fun ensureVoice(): VoiceListener {
-        voice?.let { return it }
+        val existing = voice
+        if (existing != null) return existing
         val v = VoiceListener(
             this, true,
             onCommand = { cmd -> onVoiceCommand(cmd) },
             onHeard = { text -> heardTv.text = "Слышу: «$text»" },
             onLevel = { lvl -> eq.level = lvl },
-            onStatus = { s -> if (s.isNotEmpty()) heardTv.text = s }
+            onStatus = { st -> if (st.isNotEmpty()) heardTv.text = st }
         )
         voice = v
         return v
@@ -502,7 +579,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         if (show) {
             val a = Prefs.acceptWords(this).firstOrNull() ?: "принять"
             val r = Prefs.rejectWords(this).firstOrNull() ?: "отклонить"
-            micToggle.getChildAt(0).let { (it as android.widget.ImageView).setImageResource(if (voiceOffForThisCall) R.drawable.ic_mic_off else R.drawable.ic_mic) }
+            (micToggle.getChildAt(0) as ImageView).setImageResource(if (voiceOffForThisCall) R.drawable.ic_mic_off else R.drawable.ic_mic)
             voiceTitle.text = when {
                 voiceOffForThisCall -> "Голос выключен"
                 Calls.announcing -> "Сейчас скажу, кто звонит…"
@@ -514,7 +591,6 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         val v = voice
         if (want) {
             ensureVoice().start()
-            eq.running = true
         } else if (v != null && v.running) {
             v.stop()
         }

@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -17,7 +18,8 @@ import android.speech.SpeechRecognizer
 /**
  * Слушает микрофон и ищет слова-команды из настроек.
  * [oneShot] = true: после первой найденной команды перестаёт слушать (так при звонке).
- * Всё работает в главном потоке; создавать и запускать — только пока экран приложения виден.
+ * Один и тот же распознаватель переиспользуется (без пауз на пересоздание), а «писк»
+ * включения микрофона заглушается, пока идёт прослушивание.
  */
 class VoiceListener(
     context: Context,
@@ -35,6 +37,7 @@ class VoiceListener(
     private var errors = 0
     private var preferOffline = true
     private var scoStarted = false
+    private var mutedByUs = false
     private var fired = false
     private var lastHeard = ""
 
@@ -57,8 +60,9 @@ class VoiceListener(
         fired = false
         errors = 0
         lastHeard = ""
+        muteBeep(true)
         startHeadsetMic()
-        begin()
+        begin(true)
     }
 
     fun stop() {
@@ -66,31 +70,39 @@ class VoiceListener(
         handler.removeCallbacksAndMessages(null)
         destroyRecognizer()
         stopHeadsetMic()
+        muteBeep(false)
         onLevel(0f)
     }
 
-    private fun begin() {
+    private fun begin(recreate: Boolean) {
         if (!running) return
-        destroyRecognizer()
-        val sr = try {
-            SpeechRecognizer.createSpeechRecognizer(ctx)
-        } catch (e: Exception) {
-            onStatus("Не удалось запустить распознавание")
-            return
+        if (recreate || recognizer == null) {
+            destroyRecognizer()
+            val created = try {
+                SpeechRecognizer.createSpeechRecognizer(ctx)
+            } catch (e: Exception) {
+                onStatus("Не удалось запустить распознавание")
+                return
+            }
+            created.setRecognitionListener(listener)
+            recognizer = created
         }
-        recognizer = sr
-        sr.setRecognitionListener(listener)
+        val sr = recognizer ?: return
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10)
         intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
         if (preferOffline) intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        if (Build.VERSION.SDK_INT >= 33) {
+            // подсказываем распознавателю, какие слова ждём — «принять» реже превратится в «привет»
+            intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(accept + reject))
+        }
         try {
             sr.startListening(intent)
         } catch (e: Exception) {
-            schedule(800)
+            schedule(500, true)
         }
     }
 
@@ -104,9 +116,9 @@ class VoiceListener(
         }
     }
 
-    private fun schedule(delayMs: Long) {
+    private fun schedule(delayMs: Long, recreate: Boolean = false) {
         if (!running) return
-        handler.postDelayed({ begin() }, delayMs)
+        handler.postDelayed({ begin(recreate) }, delayMs)
     }
 
     private val listener = object : RecognitionListener {
@@ -132,19 +144,21 @@ class VoiceListener(
                 return
             }
             if (error == 12 || error == 13) preferOffline = false // нет офлайн-языка: идём через интернет
-            if (!quiet) {
+            if (quiet) {
+                errors = 0
+                schedule(0)
+            } else {
                 errors++
                 if (errors >= 3) onStatus("Распознавание речи не отвечает (код $error). Проверьте интернет")
-            } else {
-                errors = 0
+                // занят или сломался — пересоздаём
+                schedule(minOf(300L * errors, 3000L), true)
             }
-            val delay = if (quiet) 120L else minOf(400L * errors, 3000L)
-            schedule(delay)
         }
 
         override fun onResults(results: Bundle?) {
             if (!running) return
-            if (!check(results)) schedule(100)
+            errors = 0
+            if (!check(results)) schedule(0)
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
@@ -171,6 +185,24 @@ class VoiceListener(
         }
         onCommand(cmd)
         return true
+    }
+
+    // ---- заглушить «писк» микрофона ----
+
+    private fun muteBeep(on: Boolean) {
+        try {
+            val am = ctx.getSystemService(AudioManager::class.java)
+            if (on) {
+                if (!am.isStreamMute(AudioManager.STREAM_MUSIC)) {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
+                    mutedByUs = true
+                }
+            } else if (mutedByUs) {
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+                mutedByUs = false
+            }
+        } catch (_: Exception) {
+        }
     }
 
     // ---- микрофон Bluetooth-наушников (по возможности) ----

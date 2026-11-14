@@ -88,4 +88,8 @@ object Prefs {
     fun setAccent(c: Context, id: String) = p(c).edit().putString("accent", id).apply()
     fun setHue(c: Context, h: Int) = p(c).edit().putInt("hue", h).apply()
     fun setBg(c: Context, m: String) = p(c).edit().putString("bg", m).apply()
+
+    /** Фон экрана звонка: "dark" (тёмный с оттенком темы), "black", "bright" (яркий цвет темы). */
+    fun callBg(c: Context): String = p(c).getString("call_bg", "dark") ?: "dark"
+    fun setCallBg(c: Context, m: String) = p(c).edit().putString("call_bg", m).apply()
 }

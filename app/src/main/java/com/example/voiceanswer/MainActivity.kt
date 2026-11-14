@@ -121,6 +121,7 @@ class MainActivity : BaseActivity() {
     private var logQuery = ""
     private var contactQuery = ""
     private var pendingCall: String? = null
+    private var photoByNumber: Map<String, String> = emptyMap()
 
     private val logAdapter = LogAdapter()
     private val contactAdapter = ContactAdapter()
@@ -190,10 +191,23 @@ class MainActivity : BaseActivity() {
 
     private fun reload() {
         io.execute {
-            val l = Repo.callLog(this)
             val c = Repo.contacts(this)
+            val photos = HashMap<String, String>()
+            val names = HashMap<String, String>()
+            for (ct in c) {
+                val k = Repo.numKey(ct.number)
+                if (k.isEmpty()) continue
+                names[k] = ct.name
+                if (ct.photo != null) photos[k] = ct.photo
+            }
+            // имя из контактов важнее старой записи в журнале
+            val l = Repo.callLog(this).map { e ->
+                val nm = names[Repo.numKey(e.number)]
+                if (nm != null && nm != e.name) LogEntry(e.id, e.number, nm, e.type, e.date, e.label) else e
+            }
             main.post {
                 if (isDestroyed) return@post
+                photoByNumber = photos
                 log = l
                 contacts = c
                 applyLog()
@@ -238,9 +252,7 @@ class MainActivity : BaseActivity() {
 
         val add = Ui.roundButton(a, 62, Ui.oval(Theme.card2), R.drawable.ic_person_add, Theme.accent, 26)
         add.setOnClickListener {
-            val i = Intent(ContactsContract.Intents.Insert.ACTION)
-            i.type = ContactsContract.RawContacts.CONTENT_TYPE
-            Perms.open(a, i)
+            startActivity(Intent(a, ContactEditActivity::class.java))
         }
         val addIcon = add.getChildAt(0) as ImageView
         onAccent { c -> addIcon.setColorFilter(c) }
@@ -546,6 +558,7 @@ class MainActivity : BaseActivity() {
     private inner class LogHolder {
         val a = this@MainActivity
         val root = LinearLayout(a)
+        val avatar = AvatarView(a, Ui.dp(a, 46), 17f)
         val typeIcon = ImageView(a)
         val title = Ui.text(a, "", 18f, Theme.text)
         val sub = Ui.text(a, "", 14f, Theme.sub)
@@ -555,10 +568,10 @@ class MainActivity : BaseActivity() {
         init {
             root.orientation = LinearLayout.HORIZONTAL
             root.gravity = Gravity.CENTER_VERTICAL
-            root.setPadding(Ui.dp(a, 20), Ui.dp(a, 12), Ui.dp(a, 12), Ui.dp(a, 12))
+            root.setPadding(Ui.dp(a, 20), Ui.dp(a, 10), Ui.dp(a, 12), Ui.dp(a, 10))
             root.background = Ui.ripple(ColorDrawable(Color.TRANSPARENT), 0f)
             root.layoutParams = android.widget.AbsListView.LayoutParams(Ui.MATCH, Ui.WRAP)
-            root.addView(typeIcon, Ui.lp(Ui.dp(a, 22), Ui.dp(a, 22)))
+            root.addView(avatar, Ui.lp(Ui.dp(a, 46), Ui.dp(a, 46)))
             val col = LinearLayout(a)
             col.orientation = LinearLayout.VERTICAL
             title.maxLines = 1
@@ -566,7 +579,12 @@ class MainActivity : BaseActivity() {
             sub.maxLines = 1
             sub.ellipsize = TextUtils.TruncateAt.END
             col.addView(title, Ui.lp(Ui.MATCH, Ui.WRAP))
-            col.addView(sub, Ui.lp(Ui.MATCH, Ui.WRAP))
+            val line2 = LinearLayout(a)
+            line2.orientation = LinearLayout.HORIZONTAL
+            line2.gravity = Gravity.CENTER_VERTICAL
+            line2.addView(typeIcon, Ui.margins(Ui.lp(Ui.dp(a, 16), Ui.dp(a, 16)), 0, 0, Ui.dp(a, 6), 0))
+            line2.addView(sub, Ui.lp(Ui.WRAP, Ui.WRAP))
+            col.addView(line2, Ui.lp(Ui.MATCH, Ui.WRAP))
             root.addView(col, Ui.margins(Ui.lp(0, Ui.WRAP, 1f), Ui.dp(a, 14), 0, Ui.dp(a, 8), 0))
             root.addView(time, Ui.lp(Ui.WRAP, Ui.WRAP))
             val i = Ui.icon(a, R.drawable.ic_info, Theme.sub)
@@ -585,10 +603,15 @@ class MainActivity : BaseActivity() {
                 }
             )
             typeIcon.setColorFilter(if (e.missed) Theme.RED else Theme.sub)
+            avatar.bind(e.name, photoByNumber[Repo.numKey(e.number)])
             title.text = e.title
             title.setTextColor(if (e.missed) Theme.RED else Theme.text)
-            sub.text = e.label
-            sub.visibility = if (e.label.isEmpty()) View.GONE else View.VISIBLE
+            val kind = when {
+                e.missed -> "Пропущенный"
+                e.outgoing -> "Исходящий"
+                else -> "Входящий"
+            }
+            sub.text = if (e.label.isEmpty()) kind else kind + " · " + e.label
             time.text = Repo.when_(e.date)
             root.setOnClickListener { placeCall(e.number) }
             info.setOnClickListener { logSheet(e) }
@@ -621,7 +644,7 @@ class MainActivity : BaseActivity() {
     private inner class ContactHolder {
         val a = this@MainActivity
         val root = LinearLayout(a)
-        val slot = FrameLayout(a)
+        val avatar = AvatarView(a, Ui.dp(a, 46), 17f)
         val name = Ui.text(a, "", 18f, Theme.text)
 
         init {
@@ -630,15 +653,14 @@ class MainActivity : BaseActivity() {
             root.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), Ui.dp(a, 8))
             root.background = Ui.ripple(ColorDrawable(Color.TRANSPARENT), 0f)
             root.layoutParams = android.widget.AbsListView.LayoutParams(Ui.MATCH, Ui.WRAP)
-            root.addView(slot, Ui.lp(Ui.dp(a, 46), Ui.dp(a, 46)))
+            root.addView(avatar, Ui.lp(Ui.dp(a, 46), Ui.dp(a, 46)))
             name.maxLines = 1
             name.ellipsize = TextUtils.TruncateAt.END
             root.addView(name, Ui.margins(Ui.lp(0, Ui.WRAP, 1f), Ui.dp(a, 16), 0, 0, 0))
         }
 
         fun bind(c: Contact) {
-            slot.removeAllViews()
-            slot.addView(Ui.avatar(a, c.name, 46, 17f), FrameLayout.LayoutParams(Ui.dp(a, 46), Ui.dp(a, 46)))
+            avatar.bind(c.name, c.photo)
             name.text = c.name
             root.setOnClickListener { contactSheet(c) }
         }
@@ -662,10 +684,9 @@ class MainActivity : BaseActivity() {
         actions.add(Triple(R.drawable.ic_content_copy, "Скопировать номер") { copy(e.number) })
         if (e.name.isNullOrBlank()) {
             actions.add(Triple(R.drawable.ic_person_add, "Добавить в контакты") {
-                val i = Intent(ContactsContract.Intents.Insert.ACTION)
-                i.type = ContactsContract.RawContacts.CONTENT_TYPE
-                i.putExtra(ContactsContract.Intents.Insert.PHONE, e.number)
-                Perms.open(this, i)
+                val i = Intent(this, ContactEditActivity::class.java)
+                i.putExtra(ContactEditActivity.EXTRA_NUMBER, e.number)
+                startActivity(i)
             })
         }
         actions.add(Triple(R.drawable.ic_delete, "Удалить из журнала") {
@@ -682,8 +703,10 @@ class MainActivity : BaseActivity() {
         actions.add(Triple(R.drawable.ic_call, "Позвонить") { placeCall(c.number) })
         actions.add(Triple(R.drawable.ic_message, "Написать SMS") { Perms.open(this, smsIntent(c.number)) })
         actions.add(Triple(R.drawable.ic_content_copy, "Скопировать номер") { copy(c.number) })
-        actions.add(Triple(R.drawable.ic_person, "Открыть контакт") {
-            Perms.open(this, Intent(Intent.ACTION_VIEW, ContactsContract.Contacts.getLookupUri(c.id, c.lookupKey)))
+        actions.add(Triple(R.drawable.ic_person, "Изменить контакт") {
+            val i = Intent(this, ContactEditActivity::class.java)
+            i.putExtra(ContactEditActivity.EXTRA_ID, c.id)
+            startActivity(i)
         })
         Ui.sheet(this, c.name, Calls.formatNumber(c.number), actions)
     }

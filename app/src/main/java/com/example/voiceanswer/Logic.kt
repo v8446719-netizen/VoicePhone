@@ -22,15 +22,49 @@ object Logic {
     fun normalize(s: String): String =
         s.lowercase(RU).replace('ё', 'е').replace(junk, " ").replace(spaces, " ").trim()
 
-    private fun firstIndex(phrase: String, words: List<String>): Int {
+    private fun firstIndex(phrase: String, words: List<String>, fuzzy: Boolean): Int {
         var best = -1
         for (w in words) {
             val n = normalize(w)
             if (n.isEmpty()) continue
-            val i = phrase.indexOf(n)
+            var i = phrase.indexOf(n)
+            if (i < 0 && fuzzy && !n.contains(' ')) i = fuzzyIndex(phrase, n)
             if (i >= 0 && (best < 0 || i < best)) best = i
         }
         return best
+    }
+
+    /** Похожее слово: распознавание часто ошибается на одну-две буквы («приму» вместо «прими»). */
+    private fun fuzzyIndex(phrase: String, word: String): Int {
+        val allowed = when {
+            word.length >= 11 -> 2
+            word.length >= 5 -> 1
+            else -> 0
+        }
+        if (allowed == 0) return -1
+        var pos = 0
+        for (t in phrase.split(' ')) {
+            if (t.isNotEmpty() && Math.abs(t.length - word.length) <= allowed && lev(t, word) <= allowed) return pos
+            pos += t.length + 1
+        }
+        return -1
+    }
+
+    fun lev(a: String, b: String): Int {
+        if (a == b) return 0
+        var prev = IntArray(b.length + 1) { it }
+        var cur = IntArray(b.length + 1)
+        for (i in 1..a.length) {
+            cur[0] = i
+            for (j in 1..b.length) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                cur[j] = minOf(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+            }
+            val t = prev
+            prev = cur
+            cur = t
+        }
+        return prev[b.length]
     }
 
     /**
@@ -42,8 +76,13 @@ object Logic {
         for (raw in phrases) {
             val p = normalize(raw)
             if (p.isEmpty()) continue
-            val a = firstIndex(p, accept)
-            val r = firstIndex(p, reject)
+            var a = firstIndex(p, accept, false)
+            var r = firstIndex(p, reject, false)
+            if (a < 0 && r < 0) {
+                // точного слова нет — пробуем похожие (распознавание ошибается на букву)
+                a = firstIndex(p, accept, true)
+                r = firstIndex(p, reject, true)
+            }
             if (a < 0 && r < 0) continue
             return if (r >= 0 && (a < 0 || r <= a)) Command.REJECT else Command.ACCEPT
         }
