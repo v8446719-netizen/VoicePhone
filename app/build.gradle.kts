@@ -8,7 +8,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.voiceanswer"
+        applicationId = "com.example.voicephone"
         minSdk = 26
         targetSdk = 34
         versionCode = 3
