@@ -27,6 +27,9 @@ class LogEntry(
     val title: String get() = if (!name.isNullOrBlank()) name else if (number.isNotBlank()) Calls.formatNumber(number) else "Неизвестный номер"
 }
 
+class PhoneNum(val dataId: Long, val number: String, val label: String)
+
+/** Один человек: все контакты с одинаковым именем склеены, все их номера — в [numbers]. */
 class Contact(
     val id: Long,
     val lookupKey: String?,
@@ -34,7 +37,9 @@ class Contact(
     val number: String,
     val starred: Boolean,
     val photo: String?,
-    val dataId: Long
+    val dataId: Long,
+    val numbers: List<PhoneNum> = emptyList(),
+    val ids: List<Long> = listOf(id)
 )
 
 /** Чтение журнала звонков и контактов (нужны разрешения; без них просто пустые списки). */
@@ -93,40 +98,63 @@ object Repo {
         }
     }
 
-    private fun readContacts(c: Context, selection: String?, args: Array<String>?, all: Boolean): List<Contact> {
+    /** Читает все номера и склеивает людей с одинаковым именем (даже из разных аккаунтов) в одну карточку. */
+    private fun readContacts(c: Context): List<Contact> {
         if (!has(c, Manifest.permission.READ_CONTACTS)) return emptyList()
-        val out = ArrayList<Contact>()
-        val seen = HashSet<Long>()
+        class G(val name: String) {
+            val ids = ArrayList<Long>()
+            val nums = ArrayList<PhoneNum>()
+            var key: String? = null
+            var starred = false
+            var photo: String? = null
+        }
+        val groups = LinkedHashMap<String, G>()
         try {
             val proj = arrayOf(
-                P.CONTACT_ID, P.LOOKUP_KEY, P.DISPLAY_NAME, P.NUMBER, P.STARRED, P.PHOTO_URI, P._ID
+                P.CONTACT_ID, P.LOOKUP_KEY, P.DISPLAY_NAME, P.NUMBER, P.STARRED, P.PHOTO_URI, P._ID, P.TYPE, P.LABEL
             )
             c.contentResolver.query(
-                P.CONTENT_URI, proj, selection, args, P.DISPLAY_NAME + " COLLATE LOCALIZED ASC"
+                P.CONTENT_URI, proj, null, null, P.DISPLAY_NAME + " COLLATE LOCALIZED ASC"
             )?.use { cur ->
                 while (cur.moveToNext()) {
+                    val name = cur.getString(2)?.trim() ?: continue
+                    if (name.isEmpty()) continue
+                    val g = groups.getOrPut(Logic.normalize(name).ifEmpty { name }) { G(name) }
                     val id = cur.getLong(0)
-                    if (!all && !seen.add(id)) continue
-                    val name = cur.getString(2) ?: continue
-                    out.add(
-                        Contact(id, cur.getString(1), name, cur.getString(3).orEmpty(), cur.getInt(4) == 1, cur.getString(5), cur.getLong(6))
-                    )
+                    if (!g.ids.contains(id)) g.ids.add(id)
+                    if (g.key == null) g.key = cur.getString(1)
+                    if (cur.getInt(4) == 1) g.starred = true
+                    if (g.photo == null) g.photo = cur.getString(5)
+                    val number = cur.getString(3).orEmpty()
+                    if (number.isBlank()) continue
+                    val k = numKey(number)
+                    if (g.nums.any { numKey(it.number) == k }) continue
+                    val label = try {
+                        P.getTypeLabel(c.resources, cur.getInt(7), cur.getString(8)).toString()
+                    } catch (e: Exception) {
+                        ""
+                    }
+                    g.nums.add(PhoneNum(cur.getLong(6), number, label))
                 }
             }
         } catch (_: Exception) {
         }
-        return out
+        return groups.values.map { g ->
+            Contact(
+                g.ids.first(), g.key, g.name, g.nums.firstOrNull()?.number.orEmpty(), g.starred, g.photo,
+                g.nums.firstOrNull()?.dataId ?: -1L, g.nums.toList(), g.ids.toList()
+            )
+        }
     }
 
-    fun contacts(c: Context): List<Contact> = readContacts(c, null, null, false)
+    fun contacts(c: Context): List<Contact> = readContacts(c)
 
-    fun contact(c: Context, id: Long): Contact? =
-        readContacts(c, "${P.CONTACT_ID}=?", arrayOf(id.toString()), false).firstOrNull()
+    fun contact(c: Context, id: Long): Contact? = readContacts(c).firstOrNull { id in it.ids }
 
     /** Ключ для сопоставления номеров: последние 10 цифр (8 999… и +7 999… дают одно и то же). */
     fun numKey(number: String): String = number.filter { it.isDigit() }.takeLast(10)
 
-    fun insertContact(c: Context, name: String, number: String): Boolean {
+    fun insertContact(c: Context, name: String, numbers: List<String>): Boolean {
         if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
         return try {
             val ops = ArrayList<ContentProviderOperation>()
@@ -143,14 +171,16 @@ object Repo {
                     .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
                     .build()
             )
-            ops.add(
-                ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
-                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
-                    .withValue(ContactsContract.Data.MIMETYPE, P.CONTENT_ITEM_TYPE)
-                    .withValue(P.NUMBER, number)
-                    .withValue(P.TYPE, P.TYPE_MOBILE)
-                    .build()
-            )
+            for (number in numbers) {
+                ops.add(
+                    ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                        .withValue(ContactsContract.Data.MIMETYPE, P.CONTENT_ITEM_TYPE)
+                        .withValue(P.NUMBER, number)
+                        .withValue(P.TYPE, P.TYPE_MOBILE)
+                        .build()
+                )
+            }
             c.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
             true
         } catch (e: Exception) {
@@ -170,51 +200,90 @@ object Repo {
         }
     }
 
-    fun updateContact(c: Context, contactId: Long, phoneDataId: Long, name: String, number: String): Boolean {
+    /**
+     * Сохраняет карточку: имя во всех склеенных контактах, номера — изменить / добавить / удалить.
+     * [numbers]: пары (dataId существующего номера или -1 для нового, номер).
+     */
+    fun saveContact(c: Context, old: Contact, name: String, numbers: List<Pair<Long, String>>): Boolean {
         if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
-        val raw = firstRawContact(c, contactId) ?: return false
+        val raw = firstRawContact(c, old.id) ?: return false
         return try {
             val ops = ArrayList<ContentProviderOperation>()
-            ops.add(
-                ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
-                    .withSelection(
-                        "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
-                        arrayOf(raw.toString(), ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+            if (name != old.name) {
+                for (id in old.ids) {
+                    val r = firstRawContact(c, id) ?: continue
+                    ops.add(
+                        ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
+                            .withSelection(
+                                "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                                arrayOf(r.toString(), ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                            )
+                            .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+                            .build()
                     )
-                    .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
-                    .build()
-            )
-            ops.add(
-                ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
-                    .withSelection("${ContactsContract.Data._ID}=?", arrayOf(phoneDataId.toString()))
-                    .withValue(P.NUMBER, number)
-                    .build()
-            )
-            c.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+                }
+            }
+            val keep = numbers.filter { it.first >= 0 }.associate { it.first to it.second }
+            for (n in old.numbers) {
+                val now = keep[n.dataId]
+                if (now == null) {
+                    ops.add(
+                        ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                            .withSelection("${ContactsContract.Data._ID}=?", arrayOf(n.dataId.toString()))
+                            .build()
+                    )
+                } else if (now != n.number) {
+                    ops.add(
+                        ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
+                            .withSelection("${ContactsContract.Data._ID}=?", arrayOf(n.dataId.toString()))
+                            .withValue(P.NUMBER, now)
+                            .build()
+                    )
+                }
+            }
+            for ((id, num) in numbers) {
+                if (id >= 0) continue
+                ops.add(
+                    ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, raw)
+                        .withValue(ContactsContract.Data.MIMETYPE, P.CONTENT_ITEM_TYPE)
+                        .withValue(P.NUMBER, num)
+                        .withValue(P.TYPE, P.TYPE_MOBILE)
+                        .build()
+                )
+            }
+            if (ops.isNotEmpty()) c.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
             true
         } catch (e: Exception) {
             false
         }
     }
 
-    fun deleteContact(c: Context, contactId: Long): Boolean {
+    /** Удаляет человека целиком — все склеенные контакты с его именем. */
+    fun deleteContact(c: Context, ids: List<Long>): Boolean {
         if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
-        return try {
-            c.contentResolver.delete(Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId.toString()), null, null) > 0
-        } catch (e: Exception) {
-            false
+        var ok = false
+        for (id in ids) {
+            try {
+                if (c.contentResolver.delete(Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, id.toString()), null, null) > 0) ok = true
+            } catch (_: Exception) {
+            }
         }
+        return ok
     }
 
-    fun setStarred(c: Context, contactId: Long, starred: Boolean): Boolean {
+    fun setStarred(c: Context, ids: List<Long>, starred: Boolean): Boolean {
         if (!has(c, Manifest.permission.WRITE_CONTACTS)) return false
-        return try {
-            val v = ContentValues()
-            v.put(ContactsContract.Contacts.STARRED, if (starred) 1 else 0)
-            c.contentResolver.update(Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId.toString()), v, null, null) > 0
-        } catch (e: Exception) {
-            false
+        var ok = false
+        for (id in ids) {
+            try {
+                val v = ContentValues()
+                v.put(ContactsContract.Contacts.STARRED, if (starred) 1 else 0)
+                if (c.contentResolver.update(Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, id.toString()), v, null, null) > 0) ok = true
+            } catch (_: Exception) {
+            }
         }
+        return ok
     }
 
     /** «12:30» сегодня, «Вчера», иначе «12.11». */

@@ -40,6 +40,7 @@ class MainActivity : BaseActivity() {
         const val REQ_PERMS = 10
         const val REQ_ROLE = 11
         const val REQ_CALL = 12
+        const val REQ_MIC = 13
     }
 
     private class Row(val header: String?, val contact: Contact?)
@@ -165,6 +166,9 @@ class MainActivity : BaseActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         for (b in banners) b.update()
         reload()
+        if (requestCode == REQ_MIC && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            startVoiceCall()
+        }
         if (requestCode == REQ_CALL) {
             val n = pendingCall
             pendingCall = null
@@ -195,10 +199,12 @@ class MainActivity : BaseActivity() {
             val photos = HashMap<String, String>()
             val names = HashMap<String, String>()
             for (ct in c) {
-                val k = Repo.numKey(ct.number)
-                if (k.isEmpty()) continue
-                names[k] = ct.name
-                if (ct.photo != null) photos[k] = ct.photo
+                for (n in ct.numbers) {
+                    val k = Repo.numKey(n.number)
+                    if (k.isEmpty()) continue
+                    names[k] = ct.name
+                    if (ct.photo != null) photos[k] = ct.photo
+                }
             }
             // имя из контактов важнее старой записи в журнале
             val l = Repo.callLog(this).map { e ->
@@ -275,7 +281,8 @@ class MainActivity : BaseActivity() {
         top.orientation = LinearLayout.HORIZONTAL
         top.gravity = Gravity.END or Gravity.CENTER_VERTICAL
         if (withSearch) top.addView(iconButton(R.drawable.ic_search) { toggleSearch() })
-        top.addView(iconButton(R.drawable.ic_mic) { startActivity(Intent(a, RecordingsActivity::class.java)) })
+        top.addView(iconButton(R.drawable.ic_mic) { startVoiceCall() })
+        top.addView(iconButton(R.drawable.ic_record) { startActivity(Intent(a, RecordingsActivity::class.java)) })
         top.addView(iconButton(R.drawable.ic_settings) { startActivity(Intent(a, SettingsActivity::class.java)) })
         h.addView(top, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 8), Ui.dp(a, 10), 0))
         val t = Ui.light(a, title, 38f, Theme.text)
@@ -513,7 +520,7 @@ class MainActivity : BaseActivity() {
         if (q.isNotEmpty()) {
             val qd = q.filter { it.isDigit() }
             for (c in contacts) {
-                if (c.name.lowercase().contains(q) || (qd.isNotEmpty() && c.number.filter { it.isDigit() }.contains(qd))) {
+                if (c.name.lowercase().contains(q) || (qd.isNotEmpty() && c.numbers.any { n -> n.number.filter { it.isDigit() }.contains(qd) })) {
                     rows.add(Row(null, c))
                 }
             }
@@ -701,15 +708,163 @@ class MainActivity : BaseActivity() {
 
     private fun contactSheet(c: Contact) {
         val actions = ArrayList<Triple<Int, String, () -> Unit>>()
-        actions.add(Triple(R.drawable.ic_call, "Позвонить") { placeCall(c.number) })
-        actions.add(Triple(R.drawable.ic_message, "Написать SMS") { Perms.open(this, smsIntent(c.number)) })
-        actions.add(Triple(R.drawable.ic_content_copy, "Скопировать номер") { copy(c.number) })
+        val nums = if (c.numbers.isEmpty()) listOf(PhoneNum(-1L, c.number, "")) else c.numbers
+        for (n in nums) {
+            val lab = if (n.label.isNotBlank()) n.label + " · " else ""
+            actions.add(Triple(R.drawable.ic_call, "Позвонить · " + lab + Calls.formatNumber(n.number)) { placeCall(n.number) })
+        }
+        val first = nums.first().number
+        actions.add(Triple(R.drawable.ic_message, "Написать SMS") { smsOrPick(nums) })
+        actions.add(Triple(R.drawable.ic_content_copy, "Скопировать номер") { copy(first) })
         actions.add(Triple(R.drawable.ic_person, "Изменить контакт") {
             val i = Intent(this, ContactEditActivity::class.java)
             i.putExtra(ContactEditActivity.EXTRA_ID, c.id)
             startActivity(i)
         })
-        Ui.sheet(this, c.name, Calls.formatNumber(c.number), actions)
+        actions.add(Triple(R.drawable.ic_delete, "Удалить контакт") { confirmDeleteContact(c) })
+        val sub = if (nums.size > 1) "Номеров: ${nums.size}" else Calls.formatNumber(first)
+        Ui.sheet(this, c.name, sub, actions)
+    }
+
+    private fun smsOrPick(nums: List<PhoneNum>) {
+        if (nums.size == 1) {
+            Perms.open(this, smsIntent(nums[0].number))
+            return
+        }
+        Ui.sheet(this, "Написать SMS", null, nums.map { n ->
+            Triple<Int, String, () -> Unit>(R.drawable.ic_message, Calls.formatNumber(n.number)) { Perms.open(this, smsIntent(n.number)) }
+        })
+    }
+
+    private fun confirmDeleteContact(c: Contact) {
+        Ui.sheet(
+            this, "Удалить «${c.name}»?", "Исчезнут все номера этого человека (${maxOf(c.numbers.size, 1)})",
+            listOf(Triple(R.drawable.ic_delete, "Да, удалить") {
+                if (Repo.deleteContact(this, c.ids)) {
+                    reload()
+                } else {
+                    Toast.makeText(this, "Не удалось удалить — нужно разрешение на изменение контактов", Toast.LENGTH_LONG).show()
+                }
+            })
+        )
+    }
+
+    // ------------------------------------------------------------------ голосовой звонок: «Позвони Маме»
+
+    private var voiceDial: VoiceDial? = null
+    private var voiceDialog: android.app.Dialog? = null
+
+    private fun stopVoiceCall() {
+        voiceDial?.stop()
+        voiceDial = null
+        try {
+            voiceDialog?.dismiss()
+        } catch (_: Exception) {
+        }
+        voiceDialog = null
+    }
+
+    override fun onPause() {
+        stopVoiceCall()
+        super.onPause()
+    }
+
+    private fun startVoiceCall() {
+        val a = this
+        if (!Perms.has(a, Manifest.permission.RECORD_AUDIO)) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+            return
+        }
+        if (!Perms.has(a, Manifest.permission.READ_CONTACTS)) {
+            Toast.makeText(a, "Нужен доступ к контактам", Toast.LENGTH_LONG).show()
+            return
+        }
+        stopVoiceCall()
+        val d = android.app.Dialog(a)
+        d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val box = LinearLayout(a)
+        box.orientation = LinearLayout.VERTICAL
+        box.gravity = Gravity.CENTER_HORIZONTAL
+        box.setPadding(Ui.dp(a, 24), Ui.dp(a, 24), Ui.dp(a, 24), Ui.dp(a, 24))
+        box.background = Ui.rounded(Theme.card, Ui.dpf(a, 26f))
+        val title = Ui.text(a, "Слушаю…", 22f, Theme.text, true)
+        box.addView(title)
+        val hint = Ui.text(a, "Скажите: «Позвони Маме» или имя из телефонной книги", 15f, Theme.sub)
+        hint.gravity = Gravity.CENTER
+        box.addView(hint, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 6), 0, 0))
+        val heard = Ui.text(a, "", 18f, Theme.text)
+        heard.gravity = Gravity.CENTER
+        box.addView(heard, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 16), 0, Ui.dp(a, 16)))
+        val cancel = Ui.text(a, "Отмена", 15f, Theme.text)
+        cancel.gravity = Gravity.CENTER
+        cancel.setPadding(Ui.dp(a, 28), Ui.dp(a, 11), Ui.dp(a, 28), Ui.dp(a, 11))
+        cancel.background = Ui.ripple(Ui.rounded(Theme.card2, Ui.dpf(a, 22f)), Ui.dpf(a, 22f))
+        cancel.isClickable = true
+        cancel.setOnClickListener { stopVoiceCall() }
+        box.addView(cancel)
+        d.setContentView(box)
+        d.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        d.window?.setLayout(resources.displayMetrics.widthPixels - Ui.dp(a, 32), Ui.WRAP)
+        d.setOnDismissListener {
+            voiceDial?.stop()
+            voiceDial = null
+        }
+        voiceDialog = d
+        d.show()
+
+        val vd = VoiceDial(
+            a,
+            onPartial = { heard.text = it },
+            onFinal = { list ->
+                heard.text = list[0]
+                resolveVoiceCall(list, d)
+            },
+            onError = { msg ->
+                title.text = "Не получилось"
+                heard.text = msg
+            }
+        )
+        voiceDial = vd
+        vd.start()
+    }
+
+    private fun resolveVoiceCall(phrases: List<String>, d: android.app.Dialog) {
+        val names = contacts.map { it.name }
+        var query = ""
+        var found: List<Int> = emptyList()
+        for (p in phrases) {
+            val q = Logic.parseCall(p) ?: Logic.normalize(p)
+            if (q.isEmpty()) continue
+            if (query.isEmpty()) query = q
+            val f = Logic.findNames(q, names)
+            if (f.isNotEmpty()) {
+                found = f
+                query = q
+                break
+            }
+        }
+        d.dismiss()
+        when {
+            found.isEmpty() -> Toast.makeText(this, "Не нашёл в контактах: «$query»", Toast.LENGTH_LONG).show()
+            found.size == 1 -> callContact(contacts[found[0]])
+            else -> Ui.sheet(this, "Кому позвонить?", "Нашлось несколько: «$query»",
+                found.take(8).map { i ->
+                    Triple<Int, String, () -> Unit>(R.drawable.ic_person, contacts[i].name) { callContact(contacts[i]) }
+                })
+        }
+    }
+
+    private fun callContact(c: Contact) {
+        val nums = if (c.numbers.isEmpty()) listOf(PhoneNum(-1L, c.number, "")) else c.numbers
+        if (nums.size == 1) {
+            Toast.makeText(this, "Звоню: " + c.name, Toast.LENGTH_SHORT).show()
+            placeCall(nums[0].number)
+        } else {
+            Ui.sheet(this, c.name, "Какой номер набрать?", nums.map { n ->
+                val lab = if (n.label.isNotBlank()) n.label + " · " else ""
+                Triple<Int, String, () -> Unit>(R.drawable.ic_call, lab + Calls.formatNumber(n.number)) { placeCall(n.number) }
+            })
+        }
     }
 
     // ------------------------------------------------------------------ звонок и набор номера
@@ -796,7 +951,7 @@ class MainActivity : BaseActivity() {
         val digits = dialed.filter { it.isDigit() }.toString()
         var hint = ""
         if (digits.length >= 3) {
-            val c = contacts.firstOrNull { it.number.filter { ch -> ch.isDigit() }.endsWith(digits) }
+            val c = contacts.firstOrNull { ct -> ct.numbers.any { n -> n.number.filter { ch -> ch.isDigit() }.endsWith(digits) } }
             if (c != null) hint = c.name
         }
         dialHint.text = hint

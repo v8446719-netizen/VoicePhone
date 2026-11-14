@@ -139,4 +139,55 @@ object Logic {
         if (letters.isEmpty()) return ""
         return letters.take(2).joinToString("").uppercase(RU)
     }
+
+    // ---- «Позвони Маме» ----
+
+    private val CALL_WORDS = setOf(
+        "позвони", "позвонить", "звони", "набери", "набрать", "вызови", "вызвать", "звонок", "call"
+    )
+    private val FILLER = setOf("по", "имени", "абоненту", "контакту", "в", "на", "мне", "пожалуйста", "и", "позвони")
+
+    /** Из фразы «позвони маме» достаёт «маме». null — это не команда звонка. */
+    fun parseCall(phrase: String): String? {
+        val words = normalize(phrase).split(' ').filter { it.isNotEmpty() }
+        val i = words.indexOfFirst { it in CALL_WORDS }
+        if (i < 0) return null
+        val rest = words.drop(i + 1).dropWhile { it in FILLER }
+        val name = rest.joinToString(" ")
+        return if (name.isEmpty()) null else name
+    }
+
+    /** Сходство слов с учётом русских окончаний: «маме» ~ «мама», «ивану» ~ «иван». */
+    fun wordMatches(q: String, w: String): Boolean {
+        if (q == w) return true
+        if (q.length < 3 || w.length < 3) return false
+        var common = 0
+        while (common < q.length && common < w.length && q[common] == w[common]) common++
+        if (common >= 3 && common >= minOf(q.length, w.length) - 2) return true
+        val allowed = if (maxOf(q.length, w.length) >= 4) 1 else 0
+        return allowed > 0 && Math.abs(q.length - w.length) <= allowed && lev(q, w) <= allowed
+    }
+
+    /**
+     * Индексы подходящих имён по запросу (лучшие первыми). Все слова запроса должны найтись среди слов имени.
+     * Точное совпадение всей строки важнее частичных.
+     */
+    fun findNames(query: String, names: List<String>): List<Int> {
+        val q = normalize(query)
+        if (q.isEmpty()) return emptyList()
+        val qw = q.split(' ')
+        val exact = ArrayList<Int>()
+        val soft = ArrayList<Int>()
+        for ((idx, n) in names.withIndex()) {
+            val nn = normalize(n)
+            if (nn.isEmpty()) continue
+            if (nn == q) {
+                exact.add(idx)
+                continue
+            }
+            val nw = nn.split(' ')
+            if (qw.all { w -> nw.any { wordMatches(w, it) } }) soft.add(idx)
+        }
+        return if (exact.isNotEmpty()) exact else soft
+    }
 }

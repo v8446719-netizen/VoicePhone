@@ -30,7 +30,10 @@ class ContactEditActivity : BaseActivity() {
 
     private var contact: Contact? = null
     private lateinit var nameInput: EditText
-    private lateinit var numberInput: EditText
+    private class NumRow(val dataId: Long, val edit: EditText, val view: View)
+
+    private val numRows = ArrayList<NumRow>()
+    private lateinit var numBox: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,6 +58,29 @@ class ContactEditActivity : BaseActivity() {
         e.background = Ui.rounded(Theme.card, Ui.dpf(a, 18f))
         e.setPadding(Ui.dp(a, 18), Ui.dp(a, 15), Ui.dp(a, 18), Ui.dp(a, 15))
         return e
+    }
+
+    private fun addNumberRow(dataId: Long, number: String) {
+        val a = this
+        val row = LinearLayout(a)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        val e = input("Телефон", number, true)
+        row.addView(e, Ui.lp(0, Ui.WRAP, 1f))
+        val del = Ui.roundButton(a, 46, ColorDrawable(Color.TRANSPARENT), R.drawable.ic_delete, Theme.RED, 24)
+        val nr = NumRow(dataId, e, row)
+        del.setOnClickListener {
+            // последний номер просто очищаем, остальные убираем
+            if (numRows.size <= 1) {
+                e.setText("")
+            } else {
+                numRows.remove(nr)
+                numBox.removeView(row)
+            }
+        }
+        row.addView(del, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), Ui.dp(a, 4), 0, 0, 0))
+        numRows.add(nr)
+        numBox.addView(row, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 12), 0, 0))
     }
 
     private fun build() {
@@ -84,19 +110,28 @@ class ContactEditActivity : BaseActivity() {
         (avatar.layoutParams as LinearLayout.LayoutParams).gravity = Gravity.CENTER_HORIZONTAL
 
         nameInput = input("Имя", c?.name ?: intent.getStringExtra(EXTRA_NAME).orEmpty(), false)
-        numberInput = input("Телефон", c?.number ?: intent.getStringExtra(EXTRA_NUMBER).orEmpty(), true)
         col.addView(nameInput, Ui.lp(Ui.MATCH, Ui.WRAP))
-        col.addView(numberInput, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 12), 0, 0))
+
+        numBox = LinearLayout(a)
+        numBox.orientation = LinearLayout.VERTICAL
+        numRows.clear()
+        if (c != null && c.numbers.isNotEmpty()) {
+            for (n in c.numbers) addNumberRow(n.dataId, n.number)
+        } else {
+            addNumberRow(-1L, intent.getStringExtra(EXTRA_NUMBER).orEmpty())
+        }
+        col.addView(numBox, Ui.lp(Ui.MATCH, Ui.WRAP))
+        col.addView(pill("+ Добавить номер", false) { addNumberRow(-1L, "") }, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 12), 0, 0))
 
         col.addView(pill("Сохранить", true) { save() }, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
         if (c != null) {
-            col.addView(pill("Позвонить", false) { call(c.number) }, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
+            col.addView(pill("Позвонить", false) { call(c.numbers.firstOrNull()?.number ?: c.number) }, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
             col.addView(pill("Написать SMS", false) {
-                Perms.open(a, Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(c.number))))
+                Perms.open(a, Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(c.numbers.firstOrNull()?.number ?: c.number))))
             }, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
             col.addView(pill(if (c.starred) "Убрать из избранного" else "В избранное ★", false) {
-                if (Repo.setStarred(a, c.id, !c.starred)) {
+                if (Repo.setStarred(a, c.ids, !c.starred)) {
                     finish()
                 } else {
                     Toast.makeText(a, "Нужно разрешение на изменение контактов", Toast.LENGTH_LONG).show()
@@ -136,9 +171,9 @@ class ContactEditActivity : BaseActivity() {
 
     private fun save() {
         val name = nameInput.text.toString().trim()
-        val number = numberInput.text.toString().trim()
-        if (name.isEmpty() || number.isEmpty()) {
-            Toast.makeText(this, "Введите имя и номер", Toast.LENGTH_SHORT).show()
+        val nums = numRows.map { it.dataId to it.edit.text.toString().trim() }.filter { it.second.isNotEmpty() }
+        if (name.isEmpty() || nums.isEmpty()) {
+            Toast.makeText(this, "Введите имя и хотя бы один номер", Toast.LENGTH_SHORT).show()
             return
         }
         if (!Perms.has(this, Manifest.permission.WRITE_CONTACTS)) {
@@ -147,7 +182,7 @@ class ContactEditActivity : BaseActivity() {
             return
         }
         val c = contact
-        val ok = if (c == null) Repo.insertContact(this, name, number) else Repo.updateContact(this, c.id, c.dataId, name, number)
+        val ok = if (c == null) Repo.insertContact(this, name, nums.map { it.second }) else Repo.saveContact(this, c, name, nums)
         if (ok) {
             Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
             finish()
@@ -160,7 +195,7 @@ class ContactEditActivity : BaseActivity() {
         Ui.sheet(
             this, "Удалить «${c.name}»?", "Контакт исчезнет с телефона",
             listOf(Triple(R.drawable.ic_delete, "Да, удалить") {
-                if (Repo.deleteContact(this, c.id)) {
+                if (Repo.deleteContact(this, c.ids)) {
                     finish()
                 } else {
                     Toast.makeText(this, "Не удалось удалить", Toast.LENGTH_LONG).show()
