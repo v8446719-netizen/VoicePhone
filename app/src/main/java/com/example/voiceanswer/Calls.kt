@@ -38,6 +38,7 @@ object Calls {
         var answeredHere = false
         var route: Int? = null
         var maxVolume = false
+        var autoRecTried = false
     }
 
     interface Listener {
@@ -331,7 +332,20 @@ object Calls {
         }
     }
 
+    private fun autoRecord(call: Call, info: Info) {
+        val ctx = app ?: return
+        if (info.autoRecTried || !Prefs.autoRec(ctx) || Prefs.recBroken(ctx) != null) return
+        info.autoRecTried = true
+        handler.postDelayed({
+            if (infos.containsKey(call) && call.state == Call.STATE_ACTIVE && !Recorder.active) {
+                val err = Recorder.start(ctx, info.name ?: formatNumber(info.number), info.number, true)
+                if (err != null) android.widget.Toast.makeText(ctx, err, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }, 800)
+    }
+
     private fun onActive(call: Call, info: Info) {
+        autoRecord(call, info)
         val route = info.route ?: return
         // Аудио-режим переключается не мгновенно — несколько попыток подряд
         for (delay in longArrayOf(0, 350, 900, 1800)) {

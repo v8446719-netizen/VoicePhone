@@ -241,6 +241,15 @@ class ControlButton(c: Context, private val iconRes: Int, label: String, sizeDp:
         alpha = if (isEnabled) 1f else 0.4f
     }
 
+    /** Серая «недоступная» кнопка (нажатие всё равно работает — покажет причину). */
+    fun setUnavailable(off: Boolean) {
+        if (!off) return
+        circle.background = Ui.ripple(Ui.oval(0x1AFFFFFF), 0f, true)
+        img.setImageResource(iconRes)
+        img.setColorFilter(0x55FFFFFF)
+        caption.setTextColor(0x55FFFFFF)
+    }
+
     fun setIcon(res: Int) {
         img.setImageResource(res)
         img.setColorFilter(Color.WHITE)

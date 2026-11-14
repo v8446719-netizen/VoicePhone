@@ -359,12 +359,13 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         if (Recorder.active) {
             Recorder.stop(this)
         } else {
-            val err = Recorder.start(this)
-            if (err != null) {
-                Toast.makeText(this, err, Toast.LENGTH_LONG).show()
-            } else if (Recorder.micOnly) {
-                Calls.setSpeaker(true, this)
-                Toast.makeText(this, "Запись идёт через микрофон — включена громкая связь, чтобы слышать собеседника", Toast.LENGTH_LONG).show()
+            val why = Prefs.recBroken(this)
+            if (why != null) {
+                Toast.makeText(this, "Запись на этом телефоне недоступна: $why. Сбросить можно в настройках.", Toast.LENGTH_LONG).show()
+            } else {
+                val inf = Calls.info(Calls.primary())
+                val err = Recorder.start(this, inf?.name ?: Calls.formatNumber(inf?.number ?: ""), inf?.number ?: "", false)
+                if (err != null) Toast.makeText(this, err, Toast.LENGTH_LONG).show()
             }
         }
         render()
@@ -487,8 +488,10 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         bSpeaker.setActive(Calls.isSpeakerOn())
         bHold.setActive(holding)
         bHold.setLabel(if (holding) "Продолжить" else "Пауза")
-        bRecord.setActive(Recorder.active)
-        bRecord.setLabel(if (Recorder.active) "Идёт запись" else "Запись")
+        val recBroken = Prefs.recBroken(this) != null && !Recorder.active
+        bRecord.setUnavailable(recBroken)
+        if (!recBroken) bRecord.setActive(Recorder.active)
+        bRecord.setLabel(if (recBroken) "Запись недоступна" else if (Recorder.active) "Идёт запись" else "Запись")
         val headset = Calls.headsetKind(this)
         val rt = Calls.audioState?.route
         bHeadset.visibility = if (headset == Calls.Headset.NONE) View.INVISIBLE else View.VISIBLE

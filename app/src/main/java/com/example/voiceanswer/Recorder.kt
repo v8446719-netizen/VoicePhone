@@ -8,26 +8,146 @@ import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.widget.Toast
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Одна запись из журнала. */
+class Rec(
+    val uri: String,
+    val isFile: Boolean,
+    val who: String,
+    val number: String,
+    val startedAt: Long,
+    val seconds: Int,
+    val auto: Boolean,
+    val micOnly: Boolean
+) {
+    fun toUri(): Uri = if (isFile) Uri.fromFile(File(uri)) else Uri.parse(uri)
+}
+
+/** Журнал записей лежит в файле recordings.json рядом с данными приложения. */
+object RecLog {
+    private fun file(c: Context) = File(c.applicationContext.filesDir, "recordings.json")
+
+    fun load(c: Context): List<Rec> {
+        val f = file(c)
+        if (!f.exists()) return emptyList()
+        val out = ArrayList<Rec>()
+        try {
+            val arr = JSONArray(f.readText())
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                out.add(
+                    Rec(
+                        o.getString("uri"), o.optBoolean("file", false), o.optString("who", ""), o.optString("number", ""),
+                        o.optLong("at", 0L), o.optInt("sec", 0), o.optBoolean("auto", false), o.optBoolean("mic", false)
+                    )
+                )
+            }
+        } catch (_: Exception) {
+        }
+        return out.sortedByDescending { it.startedAt }
+    }
+
+    private fun save(c: Context, list: List<Rec>) {
+        try {
+            val arr = JSONArray()
+            for (r in list) {
+                val o = JSONObject()
+                o.put("uri", r.uri)
+                o.put("file", r.isFile)
+                o.put("who", r.who)
+                o.put("number", r.number)
+                o.put("at", r.startedAt)
+                o.put("sec", r.seconds)
+                o.put("auto", r.auto)
+                o.put("mic", r.micOnly)
+                arr.put(o)
+            }
+            file(c).writeText(arr.toString())
+        } catch (_: Exception) {
+        }
+    }
+
+    fun add(c: Context, r: Rec) {
+        save(c, load(c) + r)
+    }
+
+    /** Удаляет запись из журнала и сам файл. */
+    fun remove(c: Context, r: Rec) {
+        try {
+            if (r.isFile) File(r.uri).delete() else c.contentResolver.delete(r.toUri(), null, null)
+        } catch (_: Exception) {
+        }
+        save(c, load(c).filter { it.uri != r.uri })
+    }
+
+    /** Убирает из журнала записи, чьи файлы пользователь уже удалил сам. */
+    fun exists(c: Context, r: Rec): Boolean = try {
+        if (r.isFile) File(r.uri).exists()
+        else c.contentResolver.openFileDescriptor(r.toUri(), "r")?.use { true } ?: false
+    } catch (e: Exception) {
+        false
+    }
+
+    fun prune(c: Context): List<Rec> {
+        val all = load(c)
+        val alive = all.filter { exists(c, it) }
+        if (alive.size != all.size) save(c, alive)
+        return alive
+    }
+
+    /** Копирует запись в «Загрузки» (Android 10+). Возвращает текст для пользователя. */
+    fun download(c: Context, r: Rec): String {
+        if (Build.VERSION.SDK_INT < 29) return "Скачивание работает на Android 10 и новее. Файл: " + r.uri
+        return try {
+            val name = "Звонок_" + SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date(r.startedAt)) + ".m4a"
+            val v = ContentValues()
+            v.put(MediaStore.Downloads.DISPLAY_NAME, name)
+            v.put(MediaStore.Downloads.MIME_TYPE, "audio/mp4")
+            v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Записи звонков")
+            val dst = c.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v) ?: return "Не удалось сохранить"
+            c.contentResolver.openInputStream(r.toUri())?.use { input ->
+                c.contentResolver.openOutputStream(dst)?.use { output -> input.copyTo(output) }
+            }
+            "Сохранено: Загрузки / Записи звонков"
+        } catch (e: Exception) {
+            "Не удалось сохранить"
+        }
+    }
+}
+
 /**
  * Запись разговора. Android не даёт обычным приложениям писать голос собеседника напрямую,
  * поэтому сначала пробуем «запись вызова», а если телефон не разрешает — пишем через микрофон
  * (тогда собеседника слышно, только если включена громкая связь).
- * Файлы лежат в папке «Музыка/Записи звонков».
+ * Если телефон записывает тишину или вовсе не умеет — кнопка записи становится серой.
  */
 object Recorder {
+    private val handler = Handler(Looper.getMainLooper())
     private var rec: MediaRecorder? = null
     private var pfd: ParcelFileDescriptor? = null
     private var uri: Uri? = null
     private var file: File? = null
     private var usedCallSource = false
+
+    private var startedAtWall = 0L
+    private var startedAtMono = 0L
+    private var who = ""
+    private var number = ""
+    private var auto = false
+    private var sawSound = false
+    private var app: Context? = null
 
     val active: Boolean get() = rec != null
 
@@ -37,15 +157,67 @@ object Recorder {
     private fun newRecorder(ctx: Context): MediaRecorder =
         if (Build.VERSION.SDK_INT >= 31) MediaRecorder(ctx) else MediaRecorder()
 
-    private fun fileName(): String =
-        "Звонок_" + SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date()) + ".m4a"
+    private fun safe(s: String): String = s.filter { it.isLetterOrDigit() || it == ' ' }.trim().replace(' ', '_').take(24)
+
+    private fun fileName(who: String): String {
+        val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+        val w = safe(who)
+        return "Звонок_" + (if (w.isEmpty()) "" else w + "_") + stamp + ".m4a"
+    }
+
+    private fun toast(c: Context, s: String) = Toast.makeText(c, s, Toast.LENGTH_LONG).show()
+
+    private val tick = object : Runnable {
+        override fun run() {
+            val r = rec ?: return
+            val ctx = app ?: return
+            val elapsed = SystemClock.elapsedRealtime() - startedAtMono
+            try {
+                if (r.maxAmplitude > 0) sawSound = true
+            } catch (_: Exception) {
+            }
+            val limit = Prefs.recMaxSeconds(ctx)
+            if (limit > 0 && elapsed >= limit * 1000L) {
+                stop(ctx)
+                toast(ctx, "Запись остановлена по таймеру")
+                return
+            }
+            if (!sawSound && elapsed >= 8000) {
+                onSilent(ctx)
+                return
+            }
+            handler.postDelayed(this, 1000)
+        }
+    }
+
+    /** За 8 секунд не было ни единого звука: источник не работает. */
+    private fun onSilent(ctx: Context) {
+        val wasCallSource = usedCallSource
+        val w = who
+        val n = number
+        val a = auto
+        discard(ctx)
+        if (wasCallSource) {
+            // «Запись вызова» дала тишину — пробуем микрофон
+            val err = begin(ctx, w, n, a, true)
+            if (err == null) return
+        }
+        Prefs.setRecBroken(ctx, "Телефон записывает тишину")
+        toast(ctx, "Этот телефон не даёт записывать разговор. Кнопка записи отключена.")
+    }
 
     /** Возвращает null, если запись началась, иначе — текст ошибки. */
-    fun start(ctx: Context): String? {
+    fun start(ctx: Context, who: String, number: String, auto: Boolean): String? {
         if (rec != null) return null
-        val app = ctx.applicationContext
-        if (!Perms.has(app, android.Manifest.permission.RECORD_AUDIO)) return "Нет разрешения на микрофон"
-        val name = fileName()
+        if (Prefs.recBroken(ctx) != null) return "Запись недоступна: " + Prefs.recBroken(ctx)
+        return begin(ctx, who, number, auto, false)
+    }
+
+    private fun begin(ctx: Context, whoName: String, num: String, isAuto: Boolean, forceMic: Boolean): String? {
+        val appCtx = ctx.applicationContext
+        app = appCtx
+        if (!Perms.has(appCtx, android.Manifest.permission.RECORD_AUDIO)) return "Нет разрешения на микрофон"
+        val name = fileName(whoName)
         try {
             if (Build.VERSION.SDK_INT >= 29) {
                 val v = ContentValues()
@@ -53,24 +225,25 @@ object Recorder {
                 v.put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
                 v.put(MediaStore.Audio.Media.RELATIVE_PATH, Environment.DIRECTORY_MUSIC + "/Записи звонков")
                 v.put(MediaStore.Audio.Media.IS_PENDING, 1)
-                val u = app.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, v)
+                val u = appCtx.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, v)
                     ?: return "Не удалось создать файл записи"
                 uri = u
-                pfd = app.contentResolver.openFileDescriptor(u, "w")
+                pfd = appCtx.contentResolver.openFileDescriptor(u, "w")
             } else {
-                val dir = File(app.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "Записи звонков")
+                val dir = File(appCtx.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "Записи звонков")
                 dir.mkdirs()
                 file = File(dir, name)
             }
         } catch (e: Exception) {
-            cleanup(app, false)
+            cleanup(appCtx, false)
             return "Не удалось создать файл записи"
         }
 
-        val sources = intArrayOf(MediaRecorder.AudioSource.VOICE_CALL, MediaRecorder.AudioSource.MIC)
+        val sources = if (forceMic) intArrayOf(MediaRecorder.AudioSource.MIC)
+        else intArrayOf(MediaRecorder.AudioSource.VOICE_CALL, MediaRecorder.AudioSource.MIC)
         var lastError = "Телефон не разрешает запись"
         for (src in sources) {
-            val r = newRecorder(app)
+            val r = newRecorder(appCtx)
             try {
                 r.setAudioSource(src)
                 r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -83,6 +256,18 @@ object Recorder {
                 r.start()
                 rec = r
                 usedCallSource = src == MediaRecorder.AudioSource.VOICE_CALL
+                who = whoName
+                number = num
+                auto = isAuto
+                sawSound = false
+                startedAtWall = System.currentTimeMillis()
+                startedAtMono = SystemClock.elapsedRealtime()
+                handler.removeCallbacks(tick)
+                handler.postDelayed(tick, 1000)
+                if (!usedCallSource && Calls.headsetKind(appCtx) == Calls.Headset.NONE && Prefs.recSpeaker(appCtx)) {
+                    Calls.setSpeaker(true, appCtx)
+                    toast(appCtx, "Запись идёт через микрофон — включена громкая связь, чтобы слышать собеседника")
+                }
                 return null
             } catch (e: Exception) {
                 lastError = "Не удалось начать запись: " + (e.message ?: e.javaClass.simpleName)
@@ -93,15 +278,21 @@ object Recorder {
                 }
             }
         }
-        cleanup(app, false)
+        cleanup(appCtx, false)
+        if (!forceMic) {
+            // не заработало ни «запись вызова», ни микрофон — телефон запись не поддерживает
+            Prefs.setRecBroken(appCtx, "Телефон не разрешает запись")
+        }
         return lastError
     }
 
-    /** Останавливает запись и сообщает, где лежит файл. */
+    /** Останавливает запись, сохраняет файл и добавляет его в журнал. */
     fun stop(ctx: Context) {
         val r = rec ?: return
-        val app = ctx.applicationContext
+        val appCtx = ctx.applicationContext
+        handler.removeCallbacks(tick)
         rec = null
+        val seconds = ((SystemClock.elapsedRealtime() - startedAtMono) / 1000).toInt()
         var ok = true
         try {
             r.stop()
@@ -112,11 +303,36 @@ object Recorder {
             r.release()
         } catch (_: Exception) {
         }
-        cleanup(app, ok)
-        if (ok) Toast.makeText(app, "Запись сохранена: Музыка / Записи звонков", Toast.LENGTH_LONG).show()
+        if (!ok || seconds < 2) {
+            cleanup(appCtx, false)
+            return
+        }
+        val entry = Rec(
+            if (uri != null) uri.toString() else file!!.absolutePath,
+            uri == null, who, number, startedAtWall, seconds, auto, !usedCallSource
+        )
+        cleanup(appCtx, true)
+        RecLog.add(appCtx, entry)
+        toast(appCtx, "Запись сохранена (" + Logic.formatDuration(seconds.toLong()) + ")")
     }
 
-    private fun cleanup(app: Context, keep: Boolean) {
+    /** Остановить и выбросить запись без сохранения. */
+    private fun discard(ctx: Context) {
+        val r = rec ?: return
+        handler.removeCallbacks(tick)
+        rec = null
+        try {
+            r.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            r.release()
+        } catch (_: Exception) {
+        }
+        cleanup(ctx.applicationContext, false)
+    }
+
+    private fun cleanup(appCtx: Context, keep: Boolean) {
         try {
             pfd?.close()
         } catch (_: Exception) {
@@ -128,9 +344,9 @@ object Recorder {
                 if (keep && Build.VERSION.SDK_INT >= 29) {
                     val v = ContentValues()
                     v.put(MediaStore.Audio.Media.IS_PENDING, 0)
-                    app.contentResolver.update(u, v, null, null)
+                    appCtx.contentResolver.update(u, v, null, null)
                 } else if (!keep) {
-                    app.contentResolver.delete(u, null, null)
+                    appCtx.contentResolver.delete(u, null, null)
                 }
             } catch (_: Exception) {
             }

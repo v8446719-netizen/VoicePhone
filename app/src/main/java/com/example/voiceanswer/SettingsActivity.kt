@@ -153,11 +153,12 @@ class SettingsActivity : BaseActivity() {
         buildStatus(col)
         buildVoice(col)
         buildWords(col)
+        buildRecording(col)
         buildTest(col)
         buildLook(col)
         buildHelp(col)
 
-        val about = Ui.text(a, "Голосовой телефон 3.1", 13f, Theme.sub)
+        val about = Ui.text(a, "Голосовой телефон 3.2", 13f, Theme.sub)
         about.gravity = Gravity.CENTER
         col.addView(about, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
@@ -273,6 +274,42 @@ class SettingsActivity : BaseActivity() {
         row.addView(input, Ui.lp(0, Ui.WRAP, 1f))
         row.addView(pill("Добавить") { add() }, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), Ui.dp(a, 8), 0, 0, 0))
         parent.addView(row, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
+    }
+
+    private fun buildRecording(col: LinearLayout) {
+        val a = this
+        val c = card(
+            col, "Записи разговоров",
+            "Android не даёт приложениям записывать голос собеседника напрямую. Если телефон не разрешает — пишется через микрофон на громкой связи."
+        )
+        switchRow(c, "Автозапись", "Начинать запись сразу, как только разговор начался", Prefs.K_AUTO_REC)
+        switchRow(c, "Громкая связь при записи с микрофона", "Чтобы собеседника было слышно в записи (без наушников)", Prefs.K_REC_SPEAKER)
+        label(c, "АВТОЗАПИСЬ ИДЁТ НЕ БОЛЬШЕ")
+        val opts = listOf(0 to "Без ограничения", 60 to "1 мин", 300 to "5 мин", 600 to "10 мин", 1800 to "30 мин", 3600 to "1 час")
+        val flow = FlowLayout(a)
+        val cur = Prefs.recMaxSeconds(a)
+        for ((sec, name) in opts) {
+            val b = if (sec == cur) pill(name) {} else softPill(name) {
+                Prefs.setRecMaxSeconds(a, sec)
+                rebuild()
+            }
+            flow.addView(b, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), 0, 0, Ui.dp(a, 8), Ui.dp(a, 8)))
+        }
+        c.addView(flow, Ui.lp(Ui.MATCH, Ui.WRAP))
+        val why = Prefs.recBroken(a)
+        if (why != null) {
+            c.addView(
+                Ui.text(a, "✗ Запись на этом телефоне не работает: $why", 14f, Theme.RED),
+                Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 6), 0, 0)
+            )
+            c.addView(softPill("Проверить запись заново") {
+                Prefs.setRecBroken(a, null)
+                rebuild()
+            }, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
+        }
+        c.addView(pill("Журнал записей") {
+            startActivity(Intent(a, RecordingsActivity::class.java))
+        }, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), 0, Ui.dp(a, 14), 0, 0))
     }
 
     private fun buildTest(col: LinearLayout) {
