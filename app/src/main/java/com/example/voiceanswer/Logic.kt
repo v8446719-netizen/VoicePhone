@@ -190,4 +190,28 @@ object Logic {
         }
         return if (exact.isNotEmpty()) exact else soft
     }
+
+    /** «Абобус позвони маме» → «маме». null — слова-активатора нет или после него нет команды звонка. */
+    fun parseWake(phrase: String, wake: String): String? {
+        val w = normalize(wake)
+        if (w.isEmpty()) return null
+        val words = normalize(phrase).split(' ').filter { it.isNotEmpty() }
+        val ww = w.split(' ')
+        for (i in 0..(words.size - ww.size)) {
+            var ok = true
+            for (k in ww.indices) if (!wakeWordMatches(words[i + k], ww[k])) ok = false
+            if (ok) return parseCall(words.drop(i + ww.size).joinToString(" "))
+        }
+        return null
+    }
+
+    private fun wakeWordMatches(heard: String, wake: String): Boolean {
+        if (heard == wake) return true
+        val allowed = when {
+            wake.length >= 8 -> 2
+            wake.length >= 5 -> 1
+            else -> 0
+        }
+        return allowed > 0 && Math.abs(heard.length - wake.length) <= allowed && lev(heard, wake) <= allowed
+    }
 }

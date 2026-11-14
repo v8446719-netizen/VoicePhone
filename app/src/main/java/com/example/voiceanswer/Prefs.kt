@@ -21,6 +21,7 @@ object Prefs {
     const val K_ANNOUNCE = "announce"
     const val K_QUIET_RINGER = "quiet_ringer"
     const val K_AUTO_REC = "auto_rec"
+    const val K_WAKE = "wake_on"
     const val K_REC_SPEAKER = "rec_speaker"
 
     fun voiceEnabled(c: Context) = flag(c, K_VOICE, true)
@@ -32,6 +33,9 @@ object Prefs {
     fun announce(c: Context) = flag(c, K_ANNOUNCE, true)
     fun quietRinger(c: Context) = flag(c, K_QUIET_RINGER, false)
     fun autoRec(c: Context) = flag(c, K_AUTO_REC, false)
+    fun wakeOn(c: Context) = flag(c, K_WAKE, false)
+    fun wakeWord(c: Context): String = p(c).getString("wake_word", null)?.takeIf { it.isNotBlank() } ?: "абобус"
+    fun setWakeWord(c: Context, w: String) = p(c).edit().putString("wake_word", Logic.cleanWord(w)).apply()
     fun recSpeaker(c: Context) = flag(c, K_REC_SPEAKER, true)
 
     /** Лимит автозаписи в секундах, 0 = без ограничения. */
@@ -54,6 +58,7 @@ object Prefs {
         K_ANNOUNCE -> announce(c)
         K_QUIET_RINGER -> quietRinger(c)
         K_AUTO_REC -> autoRec(c)
+        K_WAKE -> wakeOn(c)
         K_REC_SPEAKER -> recSpeaker(c)
         else -> false
     }

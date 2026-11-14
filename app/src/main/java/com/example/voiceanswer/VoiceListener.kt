@@ -27,7 +27,11 @@ class VoiceListener(
     private val onCommand: (Logic.Command) -> Unit,
     private val onHeard: (String) -> Unit,
     private val onLevel: (Float) -> Unit,
-    private val onStatus: (String) -> Unit
+    private val onStatus: (String) -> Unit,
+    /** Если задан — слушаем фразы целиком (режим «слово-активатор»): true = фраза обработана. */
+    private val onPhrase: ((List<String>) -> Boolean)? = null,
+    /** Глушить «писк» микрофона только когда не играет музыка (для постоянного прослушивания). */
+    private val smartMute: Boolean = false
 ) {
     private val ctx: Context = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
@@ -60,7 +64,7 @@ class VoiceListener(
         fired = false
         errors = 0
         lastHeard = ""
-        muteBeep(true)
+        if (!smartMute) muteBeep(true)
         startHeadsetMic()
         begin(true)
     }
@@ -88,6 +92,12 @@ class VoiceListener(
             recognizer = created
         }
         val sr = recognizer ?: return
+        if (smartMute) {
+            try {
+                muteBeep(!ctx.getSystemService(AudioManager::class.java).isMusicActive)
+            } catch (_: Exception) {
+            }
+        }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
@@ -163,7 +173,7 @@ class VoiceListener(
 
         override fun onPartialResults(partialResults: Bundle?) {
             if (!running) return
-            check(partialResults)
+            if (onPhrase == null) check(partialResults)
         }
     }
 
@@ -173,6 +183,15 @@ class VoiceListener(
         if (!top.isNullOrBlank() && top != lastHeard) {
             lastHeard = top
             onHeard(top)
+        }
+        if (onPhrase != null) {
+            if (fired) return true
+            if (onPhrase.invoke(list)) {
+                fired = true
+                handler.postDelayed({ fired = false }, 4000)
+                return true
+            }
+            return false
         }
         if (fired) return true
         val cmd = Logic.match(list, accept, reject) ?: return false

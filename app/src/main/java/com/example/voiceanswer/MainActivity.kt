@@ -160,6 +160,7 @@ class MainActivity : BaseActivity() {
         if (isFinishing) return
         for (b in banners) b.update()
         reload()
+        if (Prefs.wakeOn(this)) WakeService.sync(this)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
