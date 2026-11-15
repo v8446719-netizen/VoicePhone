@@ -116,6 +116,7 @@ class MainActivity : BaseActivity() {
     private val dialed = StringBuilder()
     private var page = 0
     private var dialOpen = false
+    private lateinit var suggestBox: LinearLayout
     private var log: List<LogEntry> = emptyList()
     private var contacts: List<Contact> = emptyList()
     private var missedOnly = false
@@ -906,6 +907,9 @@ class MainActivity : BaseActivity() {
         dialHint = Ui.text(a, "", 16f, Theme.sub)
         dialHint.gravity = Gravity.CENTER
         p.addView(dialHint, Ui.lp(Ui.MATCH, Ui.dp(a, 26)))
+        suggestBox = LinearLayout(a)
+        suggestBox.orientation = LinearLayout.VERTICAL
+        p.addView(suggestBox, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), Ui.dp(a, 16), Ui.dp(a, 4), Ui.dp(a, 16), 0))
 
         p.addView(View(a), Ui.lp(Ui.MATCH, 0, 1f))
         p.addView(
@@ -948,15 +952,54 @@ class MainActivity : BaseActivity() {
         return p
     }
 
+    /** Похожие номера из контактов и журнала: показываются, пока набираете. */
+    private class Suggest(val title: String, val number: String, val sub: String, val rank: Int)
+
     private fun updateDial() {
+        val a = this
         dialNumber.text = dialed.toString()
         val digits = dialed.filter { it.isDigit() }.toString()
-        var hint = ""
-        if (digits.length >= 3) {
-            val c = contacts.firstOrNull { ct -> ct.numbers.any { n -> n.number.filter { ch -> ch.isDigit() }.endsWith(digits) } }
-            if (c != null) hint = c.name
+        suggestBox.removeAllViews()
+        if (digits.length < 2) {
+            dialHint.text = ""
+            return
         }
-        dialHint.text = hint
+        val found = LinkedHashMap<String, Suggest>()
+        fun consider(title: String, number: String, sub: String) {
+            val d = number.filter { it.isDigit() }
+            val key = Repo.numKey(number)
+            if (key.isEmpty() || found.containsKey(key)) return
+            val rank = when {
+                d.startsWith(digits) || key.startsWith(digits) -> 0
+                d.endsWith(digits) -> 1
+                d.contains(digits) -> 2
+                else -> return
+            }
+            found[key] = Suggest(title, number, sub, rank)
+        }
+        for (c in contacts) for (n in c.numbers) consider(c.name, n.number, if (n.label.isNotBlank()) n.label else "Контакт")
+        for (e in log) if (e.number.isNotBlank()) consider(e.title, e.number, "Из журнала")
+        val top = found.values.sortedBy { it.rank }.take(3)
+        dialHint.text = if (digits.length >= 3 && top.isEmpty()) "Нового номера нет в контактах" else if (top.isNotEmpty()) "Похожие номера" else ""
+        for (sg in top) {
+            val row = LinearLayout(a)
+            row.orientation = LinearLayout.VERTICAL
+            row.setPadding(Ui.dp(a, 16), Ui.dp(a, 8), Ui.dp(a, 16), Ui.dp(a, 8))
+            row.background = Ui.ripple(Ui.rounded(Theme.card, Ui.dpf(a, 16f)), Ui.dpf(a, 16f))
+            row.isClickable = true
+            val t1 = Ui.text(a, sg.title, 16f, Theme.text, true)
+            t1.maxLines = 1
+            row.addView(t1)
+            val t2 = Ui.text(a, Calls.formatNumber(sg.number) + " · " + sg.sub, 13f, Theme.sub)
+            t2.maxLines = 1
+            row.addView(t2)
+            row.setOnClickListener {
+                dialed.setLength(0)
+                dialed.append(sg.number)
+                updateDial()
+            }
+            suggestBox.addView(row, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, 0, 0, Ui.dp(a, 6)))
+        }
     }
 
     private fun openDial(prefill: String) {

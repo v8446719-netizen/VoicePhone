@@ -167,7 +167,7 @@ class SettingsActivity : BaseActivity() {
         buildLook(col)
         buildHelp(col)
 
-        val about = Ui.text(a, "Голосовой телефон 3.6", 13f, Theme.sub)
+        val about = Ui.text(a, "Голосовой телефон 3.7", 13f, Theme.sub)
         about.gravity = Gravity.CENTER
         col.addView(about, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
