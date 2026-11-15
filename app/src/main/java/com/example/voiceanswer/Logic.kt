@@ -172,23 +172,38 @@ object Logic {
      * Индексы подходящих имён по запросу (лучшие первыми). Все слова запроса должны найтись среди слов имени.
      * Точное совпадение всей строки важнее частичных.
      */
+    /** Слова, которые распознаватель часто путает с «дядя» («дядя» → «10», «десять», «дедя»). */
+    private val DYADYA_ALIASES = setOf("10", "десять", "дедя", "дядь", "дядя", "дядю", "дяде", "дядей")
+
+    private fun fixHeard(w: String): String = if (w in DYADYA_ALIASES) "дядя" else w
+
     fun findNames(query: String, names: List<String>): List<Int> {
         val q = normalize(query)
         if (q.isEmpty()) return emptyList()
-        val qw = q.split(' ')
+        val qw = q.split(' ').map { fixHeard(it) }
         val exact = ArrayList<Int>()
         val soft = ArrayList<Int>()
+        val partial = ArrayList<Pair<Int, Int>>() // индекс, сколько слов совпало
         for ((idx, n) in names.withIndex()) {
             val nn = normalize(n)
             if (nn.isEmpty()) continue
-            if (nn == q) {
+            val nw = nn.split(' ').map { fixHeard(it) }
+            if (nn == q || nw == qw) {
                 exact.add(idx)
                 continue
             }
-            val nw = nn.split(' ')
-            if (qw.all { w -> nw.any { wordMatches(w, it) } }) soft.add(idx)
+            if (qw.all { w -> nw.any { wordMatches(w, it) } }) {
+                soft.add(idx)
+                continue
+            }
+            // слабое совпадение: часть слов запроса (остальные могли быть распознаны неверно)
+            val hit = qw.count { w -> w.length >= 3 && !w.all { it.isDigit() } && w != "дядя" && nw.any { wordMatches(w, it) } }
+            if (hit > 0) partial.add(idx to hit)
         }
-        return if (exact.isNotEmpty()) exact else soft
+        if (exact.isNotEmpty()) return exact
+        if (soft.isNotEmpty()) return soft
+        val best = partial.maxOfOrNull { it.second } ?: return emptyList()
+        return partial.filter { it.second == best }.map { it.first }
     }
 
     /** «Абобус позвони маме» → «маме». null — слова-активатора нет или после него нет команды звонка. */

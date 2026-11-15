@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -31,7 +32,9 @@ class VoiceListener(
     /** Если задан — слушаем фразы целиком (режим «слово-активатор»): true = фраза обработана. */
     private val onPhrase: ((List<String>) -> Boolean)? = null,
     /** Глушить «писк» микрофона только когда не играет музыка (для постоянного прослушивания). */
-    private val smartMute: Boolean = false
+    private val smartMute: Boolean = false,
+    /** Подсказка распознавателю: слова, которые вероятнее всего прозвучат (имена из контактов и т.п.). */
+    private val bias: (() -> List<String>)? = null
 ) {
     private val ctx: Context = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
@@ -44,6 +47,19 @@ class VoiceListener(
     private val mutedByUs = HashSet<Int>()
     private var fired = false
     private var lastHeard = ""
+    private var lastActivity = 0L
+
+    /** Сторож: если распознаватель завис и молчит дольше 30 секунд — пересоздаём его. */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (!running) return
+            if (SystemClock.elapsedRealtime() - lastActivity > 30000) {
+                errors = 0
+                begin(true)
+            }
+            handler.postDelayed(this, 10000)
+        }
+    }
 
     var running = false
         private set
@@ -91,6 +107,7 @@ class VoiceListener(
         if (!smartMute) muteBeep(true)
         startHeadsetMic()
         begin(true)
+        if (onPhrase != null) handler.postDelayed(watchdog, 10000)
     }
 
     fun stop() {
@@ -137,8 +154,14 @@ class VoiceListener(
         if (preferOffline) intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         if (Build.VERSION.SDK_INT >= 33) {
             // подсказываем распознавателю, какие слова ждём — «принять» реже превратится в «привет»
-            intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(accept + reject))
+            intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(if (bias != null) bias.invoke() else accept + reject))
         }
+        if (onPhrase != null) {
+            // фраза «Абобус, позвони дяде Серёже» произносится с паузами — не обрывать её раньше времени
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+        }
+        lastActivity = SystemClock.elapsedRealtime()
         try {
             sr.startListening(intent)
         } catch (e: Exception) {
@@ -163,6 +186,7 @@ class VoiceListener(
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
+            lastActivity = SystemClock.elapsedRealtime()
             onStatus("")
         }
 
@@ -178,9 +202,11 @@ class VoiceListener(
 
         override fun onError(error: Int) {
             if (!running) return
+            lastActivity = SystemClock.elapsedRealtime()
             val quiet = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
             if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
                 onStatus("Нет разрешения на микрофон")
+                if (onPhrase != null) schedule(5000, true)
                 return
             }
             if (error == 12 || error == 13) preferOffline = false // нет офлайн-языка: идём через интернет
@@ -198,7 +224,8 @@ class VoiceListener(
         override fun onResults(results: Bundle?) {
             if (!running) return
             errors = 0
-            if (!check(results)) schedule(0)
+            // в режиме слова-активатора слушаем дальше всегда, даже после команды
+            if (!check(results) || onPhrase != null) schedule(0)
         }
 
         override fun onPartialResults(partialResults: Bundle?) {

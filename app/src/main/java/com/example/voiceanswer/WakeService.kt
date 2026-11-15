@@ -47,6 +47,16 @@ class WakeService : Service(), Calls.Listener {
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var listener: VoiceListener? = null
+    @Volatile private var names: List<String> = emptyList()
+
+    private fun loadNames() {
+        io.execute {
+            try {
+                names = Repo.contacts(this).map { it.name }
+            } catch (_: Exception) {
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -58,6 +68,7 @@ class WakeService : Service(), Calls.Listener {
             return START_NOT_STICKY
         }
         startInForeground()
+        loadNames()
         Calls.addListener(this)
         refresh()
         return START_STICKY
@@ -75,6 +86,7 @@ class WakeService : Service(), Calls.Listener {
     }
 
     private fun refresh() {
+        loadNames()
         if (Calls.calls.isEmpty()) startListening() else stopListening()
     }
 
@@ -115,7 +127,8 @@ class WakeService : Service(), Calls.Listener {
             this, false,
             onCommand = {}, onHeard = {}, onLevel = {}, onStatus = {},
             onPhrase = { phrases -> handle(phrases) },
-            smartMute = true
+            smartMute = true,
+            bias = { listOf(Prefs.wakeWord(this) + " позвони", "позвони", "набери") + names.take(150) }
         )
         listener = l
         l.start()
