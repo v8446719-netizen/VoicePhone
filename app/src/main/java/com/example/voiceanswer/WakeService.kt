@@ -47,6 +47,7 @@ class WakeService : Service(), Calls.Listener {
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var listener: VoiceListener? = null
+    private var quiet: WakeListener? = null
     @Volatile private var names: List<String> = emptyList()
 
     private fun loadNames() {
@@ -122,13 +123,30 @@ class WakeService : Service(), Calls.Listener {
     }
 
     private fun startListening() {
-        if (listener?.running == true) return
+        if (listener?.running == true || quiet?.running == true) return
+        val biasList = { listOf(Prefs.wakeWord(this) + " позвони", "позвони", "набери") + names.take(150) }
+        if (Build.VERSION.SDK_INT >= 33 && !Prefs.pipeBroken(this)) {
+            val q = WakeListener(
+                this,
+                onPhrase = { phrases -> handle(phrases) },
+                bias = biasList,
+                onBroken = {
+                    // этот телефон не принимает звук напрямую — переходим на обычное прослушивание
+                    Prefs.setPipeBroken(this, true)
+                    stopListening()
+                    refresh()
+                }
+            )
+            quiet = q
+            if (q.start()) return
+            quiet = null
+        }
         val l = VoiceListener(
             this, false,
             onCommand = {}, onHeard = {}, onLevel = {}, onStatus = {},
             onPhrase = { phrases -> handle(phrases) },
             smartMute = true,
-            bias = { listOf(Prefs.wakeWord(this) + " позвони", "позвони", "набери") + names.take(150) }
+            bias = biasList
         )
         listener = l
         l.start()
@@ -137,6 +155,8 @@ class WakeService : Service(), Calls.Listener {
     private fun stopListening() {
         listener?.stop()
         listener = null
+        quiet?.stop()
+        quiet = null
     }
 
     /** true, если фраза была командой звонка. */

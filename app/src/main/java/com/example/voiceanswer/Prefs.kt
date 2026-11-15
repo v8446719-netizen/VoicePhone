@@ -39,6 +39,9 @@ object Prefs {
 
     fun setBeepMuted(c: Context, s: Set<Int>) = p(c).edit().putString("beep_muted", s.joinToString(",")).apply()
 
+    fun pipeBroken(c: Context): Boolean = p(c).getBoolean("wake_pipe_broken", false)
+    fun setPipeBroken(c: Context, v: Boolean) = p(c).edit().putBoolean("wake_pipe_broken", v).apply()
+
     fun wakeOn(c: Context) = flag(c, K_WAKE, false)
     fun clearVoice(c: Context) = flag(c, K_CLEAR_VOICE, true)
     fun wakeWord(c: Context): String = p(c).getString("wake_word", null)?.takeIf { it.isNotBlank() } ?: "абобус"

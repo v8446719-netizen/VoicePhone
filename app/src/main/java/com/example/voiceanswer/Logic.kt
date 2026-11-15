@@ -165,7 +165,27 @@ object Logic {
         while (common < q.length && common < w.length && q[common] == w[common]) common++
         if (common >= 3 && common >= minOf(q.length, w.length) - 2) return true
         val allowed = if (maxOf(q.length, w.length) >= 4) 1 else 0
-        return allowed > 0 && Math.abs(q.length - w.length) <= allowed && lev(q, w) <= allowed
+        if (allowed > 0 && Math.abs(q.length - w.length) <= allowed && lev(q, w) <= allowed) return true
+        // «Федотову» ~ «Седотов»: сравниваем основы (без окончаний) со слиянием парных согласных
+        val n = minOf(q.length, w.length) - 1
+        if (n >= 5 && Math.abs(q.length - w.length) <= 3) {
+            val fa = fold(q).take(n)
+            val fb = fold(w).take(n)
+            if (lev(fa, fb) <= (if (n >= 9) 2 else 1)) return true
+        }
+        return false
+    }
+
+    /** Звонкие и глухие согласные распознаватель путает чаще всего. */
+    private fun fold(w: String): String {
+        val sb = StringBuilder()
+        for (ch in w) sb.append(
+            when (ch) {
+                'б' -> 'п'; 'в' -> 'ф'; 'г' -> 'к'; 'д' -> 'т'; 'ж' -> 'ш'; 'з' -> 'с'
+                else -> ch
+            }
+        )
+        return sb.toString()
     }
 
     /**
