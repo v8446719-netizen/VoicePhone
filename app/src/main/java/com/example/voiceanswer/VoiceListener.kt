@@ -119,7 +119,41 @@ class VoiceListener(
         onLevel(0f)
     }
 
+    private var quick = 0
+    private var lastBegin = 0L
+
     private fun begin(recreate: Boolean) {
+        if (!running) return
+        if (onPhrase != null) {
+            // пока играет видео или музыка (TikTok и т.п.) микрофон не трогаем — иначе он мигает и мешает
+            if (!Prefs.wakeDuringMedia(ctx)) {
+                val playing = try {
+                    ctx.getSystemService(AudioManager::class.java).isMusicActive
+                } catch (e: Exception) {
+                    false
+                }
+                if (playing) {
+                    destroyRecognizer()
+                    muteBeep(false)
+                    handler.postDelayed({ begin(false) }, 3000)
+                    return
+                }
+            }
+            // частые перезапуски подряд (шум вокруг) — делаем паузы длиннее, чтобы микрофон не «дёргался»
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastBegin < 1500) quick++ else quick = 0
+            lastBegin = now
+            if (quick >= 3) {
+                val wait = minOf(quick * 500L, 4000L)
+                quick++
+                handler.postDelayed({ beginNow(recreate) }, wait)
+                return
+            }
+        }
+        beginNow(recreate)
+    }
+
+    private fun beginNow(recreate: Boolean) {
         if (!running) return
         if (recreate || recognizer == null) {
             destroyRecognizer()

@@ -22,6 +22,7 @@ object Prefs {
     const val K_QUIET_RINGER = "quiet_ringer"
     const val K_AUTO_REC = "auto_rec"
     const val K_WAKE = "wake_on"
+    const val K_WAKE_MEDIA = "wake_media"
     const val K_CLEAR_VOICE = "clear_voice"
     const val K_REC_SPEAKER = "rec_speaker"
 
@@ -41,6 +42,8 @@ object Prefs {
 
     fun pipeBroken(c: Context): Boolean = p(c).getBoolean("wake_pipe_broken", false)
     fun setPipeBroken(c: Context, v: Boolean) = p(c).edit().putBoolean("wake_pipe_broken", v).apply()
+
+    fun wakeDuringMedia(c: Context): Boolean = p(c).getBoolean("wake_media", false)
 
     fun wakeOn(c: Context) = flag(c, K_WAKE, false)
     fun clearVoice(c: Context) = flag(c, K_CLEAR_VOICE, true)
@@ -69,6 +72,7 @@ object Prefs {
         K_QUIET_RINGER -> quietRinger(c)
         K_AUTO_REC -> autoRec(c)
         K_WAKE -> wakeOn(c)
+        K_WAKE_MEDIA -> wakeDuringMedia(c)
         K_CLEAR_VOICE -> clearVoice(c)
         K_REC_SPEAKER -> recSpeaker(c)
         else -> false

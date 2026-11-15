@@ -167,7 +167,7 @@ class SettingsActivity : BaseActivity() {
         buildLook(col)
         buildHelp(col)
 
-        val about = Ui.text(a, "Голосовой телефон 3.12", 13f, Theme.sub)
+        val about = Ui.text(a, "Голосовой телефон 3.13", 13f, Theme.sub)
         about.gravity = Gravity.CENTER
         col.addView(about, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
@@ -293,6 +293,7 @@ class SettingsActivity : BaseActivity() {
             "Скажите слово-активатор и команду: «" + Prefs.wakeWord(a) + ", позвони маме» — телефон сам позвонит, даже при заблокированном экране."
         )
         switchRow(c, "Всегда слушать слово-активатор", "Работает в фоне. Android показывает при этом маленький значок микрофона — скрыть его нельзя", Prefs.K_WAKE)
+        switchRow(c, "Слушать и во время музыки и видео", "Выключено: пока играет TikTok, YouTube или музыка, микрофон не используется (так он не мигает)", Prefs.K_WAKE_MEDIA)
         label(c, "СЛОВО-АКТИВАТОР")
         val row = LinearLayout(a)
         row.gravity = Gravity.CENTER_VERTICAL
