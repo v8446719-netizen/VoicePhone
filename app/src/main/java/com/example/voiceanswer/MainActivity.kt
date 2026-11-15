@@ -161,6 +161,7 @@ class MainActivity : BaseActivity() {
         for (b in banners) b.update()
         reload()
         if (Prefs.wakeOn(this)) WakeService.sync(this)
+        if (Calls.calls.isEmpty() && !Prefs.wakeOn(this)) VoiceListener.restoreSound(this)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

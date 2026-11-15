@@ -51,6 +51,7 @@ class WakeService : Service(), Calls.Listener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        VoiceListener.restoreSound(this)
         if (intent?.action == ACTION_STOP) {
             Prefs.set(this, Prefs.K_WAKE, false)
             stopSelf()

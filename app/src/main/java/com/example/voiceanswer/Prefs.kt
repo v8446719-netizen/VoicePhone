@@ -34,6 +34,11 @@ object Prefs {
     fun announce(c: Context) = flag(c, K_ANNOUNCE, true)
     fun quietRinger(c: Context) = flag(c, K_QUIET_RINGER, false)
     fun autoRec(c: Context) = flag(c, K_AUTO_REC, false)
+    fun beepMuted(c: Context): Set<Int> =
+        (p(c).getString("beep_muted", "") ?: "").split(',').mapNotNull { it.toIntOrNull() }.toSet()
+
+    fun setBeepMuted(c: Context, s: Set<Int>) = p(c).edit().putString("beep_muted", s.joinToString(",")).apply()
+
     fun wakeOn(c: Context) = flag(c, K_WAKE, false)
     fun clearVoice(c: Context) = flag(c, K_CLEAR_VOICE, true)
     fun wakeWord(c: Context): String = p(c).getString("wake_word", null)?.takeIf { it.isNotBlank() } ?: "абобус"

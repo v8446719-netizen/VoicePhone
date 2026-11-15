@@ -41,12 +41,36 @@ class VoiceListener(
     private var errors = 0
     private var preferOffline = true
     private var scoStarted = false
-    private var mutedByUs = false
+    private val mutedByUs = HashSet<Int>()
     private var fired = false
     private var lastHeard = ""
 
     var running = false
         private set
+
+    companion object {
+        private val BEEP_STREAMS = intArrayOf(
+            AudioManager.STREAM_MUSIC, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM
+        )
+
+        private fun unmuteAll(ctx: Context, streams: Set<Int>) {
+            val am = ctx.getSystemService(AudioManager::class.java)
+            for (st in streams) {
+                try {
+                    am.adjustStreamVolume(st, AudioManager.ADJUST_UNMUTE, 0)
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        /** Если приложение убили во время прослушивания, звук мог остаться выключенным — возвращаем. */
+        fun restoreSound(ctx: Context) {
+            val left = Prefs.beepMuted(ctx)
+            if (left.isEmpty()) return
+            unmuteAll(ctx.applicationContext, left)
+            Prefs.setBeepMuted(ctx, emptySet())
+        }
+    }
 
     fun start() {
         if (running) return
@@ -94,7 +118,13 @@ class VoiceListener(
         val sr = recognizer ?: return
         if (smartMute) {
             try {
-                muteBeep(!ctx.getSystemService(AudioManager::class.java).isMusicActive)
+                // пока играет музыка — её не глушим (иначе она будет прерываться), системные «пики» глушим всегда
+                val am = ctx.getSystemService(AudioManager::class.java)
+                val music = am.isMusicActive
+                if (music && mutedByUs.remove(AudioManager.STREAM_MUSIC)) {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+                }
+                muteBeep(true, !music)
             } catch (_: Exception) {
             }
         }
@@ -208,17 +238,26 @@ class VoiceListener(
 
     // ---- заглушить «писк» микрофона ----
 
-    private fun muteBeep(on: Boolean) {
+    private fun muteBeep(on: Boolean, includeMusic: Boolean = true) {
         try {
             val am = ctx.getSystemService(AudioManager::class.java)
             if (on) {
-                if (!am.isStreamMute(AudioManager.STREAM_MUSIC)) {
-                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
-                    mutedByUs = true
+                // «писк» микрофона может идти по разным каналам; рингтон звонка (STREAM_RING) не трогаем
+                for (st in BEEP_STREAMS) {
+                    if (st == AudioManager.STREAM_MUSIC && !includeMusic) continue
+                    try {
+                        if (!am.isStreamMute(st) && !mutedByUs.contains(st)) {
+                            am.adjustStreamVolume(st, AudioManager.ADJUST_MUTE, 0)
+                            mutedByUs.add(st)
+                        }
+                    } catch (_: Exception) {
+                    }
                 }
-            } else if (mutedByUs) {
-                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
-                mutedByUs = false
+                Prefs.setBeepMuted(ctx, mutedByUs)
+            } else if (mutedByUs.isNotEmpty()) {
+                unmuteAll(ctx, mutedByUs)
+                mutedByUs.clear()
+                Prefs.setBeepMuted(ctx, emptySet())
             }
         } catch (_: Exception) {
         }
