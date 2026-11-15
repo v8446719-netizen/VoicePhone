@@ -888,6 +888,9 @@ class MainActivity : BaseActivity() {
 
     private fun buildDial(): LinearLayout {
         val a = this
+        // размер кнопок подгоняем под высоту экрана, чтобы кнопка вызова всегда помещалась
+        val heightDp = resources.displayMetrics.heightPixels / resources.displayMetrics.density
+        val keySize = ((heightDp - 110f - 62f - 66f - 26f - 140f - 58f) / 5f).toInt().coerceIn(46, 74)
         val p = LinearLayout(a)
         p.orientation = LinearLayout.VERTICAL
         p.gravity = Gravity.CENTER_HORIZONTAL
@@ -899,11 +902,11 @@ class MainActivity : BaseActivity() {
         top.addView(iconButton(R.drawable.ic_close) { closeDial() })
         p.addView(top, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), Ui.dp(a, 8), Ui.dp(a, 8), 0, 0))
 
-        dialNumber = Ui.light(a, "", 38f, Theme.text)
+        dialNumber = Ui.light(a, "", 34f, Theme.text)
         dialNumber.gravity = Gravity.CENTER
         dialNumber.maxLines = 1
         dialNumber.ellipsize = TextUtils.TruncateAt.START
-        p.addView(dialNumber, Ui.margins(Ui.lp(Ui.MATCH, Ui.dp(a, 64)), Ui.dp(a, 16), Ui.dp(a, 12), Ui.dp(a, 16), 0))
+        p.addView(dialNumber, Ui.margins(Ui.lp(Ui.MATCH, Ui.dp(a, 56)), Ui.dp(a, 16), Ui.dp(a, 10), Ui.dp(a, 16), 0))
         dialHint = Ui.text(a, "", 16f, Theme.sub)
         dialHint.gravity = Gravity.CENTER
         p.addView(dialHint, Ui.lp(Ui.MATCH, Ui.dp(a, 26)))
@@ -913,7 +916,7 @@ class MainActivity : BaseActivity() {
 
         p.addView(View(a), Ui.lp(Ui.MATCH, 0, 1f))
         p.addView(
-            KeypadView(a, 74, Theme.text, Theme.card,
+            KeypadView(a, keySize, Theme.text, Theme.card,
                 onDown = { ch -> dialed.append(ch); updateDial() },
                 onUp = {},
                 onLong = { _ ->
@@ -927,8 +930,8 @@ class MainActivity : BaseActivity() {
         val bottom = LinearLayout(a)
         bottom.orientation = LinearLayout.HORIZONTAL
         bottom.gravity = Gravity.CENTER
-        bottom.addView(View(a), Ui.lp(Ui.dp(a, 74), Ui.dp(a, 74)))
-        val call = Ui.roundButton(a, 74, Ui.oval(Theme.GREEN), R.drawable.ic_call, Color.WHITE, 32)
+        bottom.addView(View(a), Ui.lp(Ui.dp(a, keySize), Ui.dp(a, keySize)))
+        val call = Ui.roundButton(a, keySize, Ui.oval(Theme.GREEN), R.drawable.ic_call, Color.WHITE, keySize * 2 / 5 + 3)
         call.setOnClickListener {
             val n = dialed.toString()
             if (n.isNotEmpty()) {
@@ -936,8 +939,8 @@ class MainActivity : BaseActivity() {
                 closeDial()
             }
         }
-        bottom.addView(call, Ui.margins(Ui.lp(Ui.dp(a, 74), Ui.dp(a, 74)), Ui.dp(a, 16), 0, Ui.dp(a, 16), 0))
-        val back = Ui.roundButton(a, 74, ColorDrawable(Color.TRANSPARENT), R.drawable.ic_backspace, Theme.sub, 28)
+        bottom.addView(call, Ui.margins(Ui.lp(Ui.dp(a, keySize), Ui.dp(a, keySize)), Ui.dp(a, 16), 0, Ui.dp(a, 16), 0))
+        val back = Ui.roundButton(a, keySize, ColorDrawable(Color.TRANSPARENT), R.drawable.ic_backspace, Theme.sub, 26)
         back.setOnClickListener {
             if (dialed.isNotEmpty()) dialed.setLength(dialed.length - 1)
             updateDial()
@@ -983,22 +986,27 @@ class MainActivity : BaseActivity() {
         dialHint.text = if (digits.length >= 3 && top.isEmpty()) "Нового номера нет в контактах" else if (top.isNotEmpty()) "Похожие номера" else ""
         for (sg in top) {
             val row = LinearLayout(a)
-            row.orientation = LinearLayout.VERTICAL
-            row.setPadding(Ui.dp(a, 16), Ui.dp(a, 8), Ui.dp(a, 16), Ui.dp(a, 8))
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.setPadding(Ui.dp(a, 16), 0, Ui.dp(a, 16), 0)
             row.background = Ui.ripple(Ui.rounded(Theme.card, Ui.dpf(a, 16f)), Ui.dpf(a, 16f))
             row.isClickable = true
-            val t1 = Ui.text(a, sg.title, 16f, Theme.text, true)
+            val pretty = Calls.formatNumber(sg.number)
+            val t1 = Ui.text(a, sg.title, 15f, Theme.text, true)
             t1.maxLines = 1
-            row.addView(t1)
-            val t2 = Ui.text(a, Calls.formatNumber(sg.number) + " · " + sg.sub, 13f, Theme.sub)
-            t2.maxLines = 1
-            row.addView(t2)
+            t1.ellipsize = TextUtils.TruncateAt.END
+            row.addView(t1, Ui.lp(0, Ui.WRAP, 1f))
+            if (sg.title != pretty) {
+                val t2 = Ui.text(a, pretty, 13f, Theme.sub)
+                t2.maxLines = 1
+                row.addView(t2, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), Ui.dp(a, 10), 0, 0, 0))
+            }
             row.setOnClickListener {
                 dialed.setLength(0)
                 dialed.append(sg.number)
                 updateDial()
             }
-            suggestBox.addView(row, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, 0, 0, Ui.dp(a, 6)))
+            suggestBox.addView(row, Ui.margins(Ui.lp(Ui.MATCH, Ui.dp(a, 40)), 0, 0, 0, Ui.dp(a, 4)))
         }
     }
 
