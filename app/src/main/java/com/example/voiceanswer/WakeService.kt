@@ -26,6 +26,7 @@ import java.util.concurrent.Executors
 class WakeService : Service(), Calls.Listener {
 
     companion object {
+        private const val USE_PIPE = false
         private const val CH = "wake_listen"
         private const val ID = 103
         private const val ACTION_STOP = "com.example.voicephone.WAKE_STOP"
@@ -125,7 +126,8 @@ class WakeService : Service(), Calls.Listener {
     private fun startListening() {
         if (listener?.running == true || quiet?.running == true) return
         val biasList = { listOf(Prefs.wakeWord(this) + " позвони", "позвони", "набери") + names.take(150) }
-        if (Build.VERSION.SDK_INT >= 33 && !Prefs.pipeBroken(this)) {
+        // «тихий» режим через канал отключён: на части телефонов Google не принимает звук этим способом
+        if (USE_PIPE && Build.VERSION.SDK_INT >= 33 && !Prefs.pipeBroken(this)) {
             val q = WakeListener(
                 this,
                 onPhrase = { phrases -> handle(phrases) },
