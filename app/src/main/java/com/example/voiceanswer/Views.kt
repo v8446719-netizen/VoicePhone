@@ -303,15 +303,9 @@ class KeypadView(
         box.gravity = Gravity.CENTER
         box.background = Ui.ripple(Ui.oval(keyFill), 0f, true)
         box.isClickable = true
-        val digit = Ui.light(c, ch.toString(), if (ch == '*' || ch == '#') 30f else 32f, textColor)
+        val digit = Ui.light(c, ch.toString(), if (ch == '*' || ch == '#') 32f else 36f, textColor)
         digit.gravity = Gravity.CENTER
         box.addView(digit, Ui.lp(Ui.WRAP, Ui.WRAP))
-        val sub = letters[ch].orEmpty()
-        if (sub.isNotEmpty()) {
-            val s = Ui.text(c, sub, 9f, textColor and 0x00FFFFFF or 0x99000000.toInt())
-            s.gravity = Gravity.CENTER
-            box.addView(s, Ui.lp(Ui.WRAP, Ui.WRAP))
-        }
         box.setOnTouchListener { v, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {

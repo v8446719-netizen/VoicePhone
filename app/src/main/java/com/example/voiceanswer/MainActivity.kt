@@ -890,7 +890,7 @@ class MainActivity : BaseActivity() {
         val a = this
         // размер кнопок подгоняем под высоту экрана, чтобы кнопка вызова всегда помещалась
         val heightDp = resources.displayMetrics.heightPixels / resources.displayMetrics.density
-        val keySize = ((heightDp - 110f - 62f - 66f - 26f - 140f - 58f) / 5f).toInt().coerceIn(46, 74)
+        val keySize = ((heightDp - 80f - 62f - 66f - 26f - 100f - 58f) / 5f).toInt().coerceIn(52, 74)
         val p = LinearLayout(a)
         p.orientation = LinearLayout.VERTICAL
         p.gravity = Gravity.CENTER_HORIZONTAL
