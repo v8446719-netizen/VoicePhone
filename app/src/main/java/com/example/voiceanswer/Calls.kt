@@ -233,7 +233,7 @@ object Calls {
 
     private fun onRinging(ctx: Context, info: Info) {
         info.wasRinging = true
-        if (Prefs.quietRinger(ctx)) silenceRinger(ctx)
+        if (Prefs.quietRinger(ctx)) setRingVolumeHalf(ctx)
         if (Prefs.announce(ctx)) {
             announcing = true
             val a = announcer ?: Announcer(ctx).also { announcer = it }
@@ -273,6 +273,17 @@ object Calls {
             announcing = false
             announcer?.stop()
             notifyChanged()
+        }
+    }
+
+    /** Тихий рингтон: при входящем звонке громкость мелодии ставится на 50%. */
+    private fun setRingVolumeHalf(ctx: Context) {
+        try {
+            val am = ctx.getSystemService(AudioManager::class.java)
+            if (am.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_RING)
+            am.setStreamVolume(AudioManager.STREAM_RING, maxOf(1, max / 2), 0)
+        } catch (_: Exception) {
         }
     }
 
