@@ -142,6 +142,7 @@ object Calls {
     fun onRemoved(svc: InCallService, call: Call) {
         val ctx = svc.applicationContext
         val info = infos.remove(call)
+        restoreRingVolume(ctx)
         try {
             call.unregisterCallback(callback)
         } catch (_: Exception) {
@@ -277,11 +278,26 @@ object Calls {
     }
 
     /** Тихий рингтон: при входящем звонке громкость мелодии ставится на 50%. */
+    private var prevRing = -1
+
+    /** После звонка возвращаем прежнюю громкость мелодии. */
+    private fun restoreRingVolume(ctx: Context) {
+        if (prevRing < 0) return
+        val v = prevRing
+        prevRing = -1
+        try {
+            val am = ctx.getSystemService(AudioManager::class.java)
+            if (am.ringerMode == AudioManager.RINGER_MODE_NORMAL) am.setStreamVolume(AudioManager.STREAM_RING, v, 0)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun setRingVolumeHalf(ctx: Context) {
         try {
             val am = ctx.getSystemService(AudioManager::class.java)
             if (am.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
             val max = am.getStreamMaxVolume(AudioManager.STREAM_RING)
+            if (prevRing < 0) prevRing = am.getStreamVolume(AudioManager.STREAM_RING)
             am.setStreamVolume(AudioManager.STREAM_RING, maxOf(1, max / 2), 0)
         } catch (_: Exception) {
         }
@@ -372,6 +388,7 @@ object Calls {
 
     private fun onActive(call: Call, info: Info) {
         autoRecord(call, info)
+        app?.let { restoreRingVolume(it) }
         app?.let { if (Prefs.clearVoice(it)) clearVoice(it) }
         val route = info.route ?: return
         // Аудио-режим переключается не мгновенно — несколько попыток подряд

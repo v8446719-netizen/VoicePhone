@@ -160,7 +160,7 @@ class SettingsActivity : BaseActivity() {
         buildLook(col)
         buildHelp(col)
 
-        val about = Ui.text(a, "Голосовой телефон 3.15", 13f, Theme.sub)
+        val about = Ui.text(a, "Голосовой телефон 3.16", 13f, Theme.sub)
         about.gravity = Gravity.CENTER
         col.addView(about, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
@@ -201,7 +201,7 @@ class SettingsActivity : BaseActivity() {
         switchRow(c, "Чёткий голос", "Включать микрофон и шумоподавление в начале разговора (если телефон это поддерживает)", Prefs.K_CLEAR_VOICE)
         switchRow(c, "Если подключены наушники", "Говорить через наушники, динамик не включать", Prefs.K_HEADSET_FIRST)
         switchRow(c, "Слушать команды через наушники", "Bluetooth-наушники: микрофон наушников (по возможности)", Prefs.K_HEADSET_MIC)
-        switchRow(c, "Тихий рингтон", "Когда звонят, ставить громкость звонка на 50%", Prefs.K_QUIET_RINGER)
+        switchRow(c, "Тихий рингтон", "Когда звонят, громкость звонка 50%; после звонка возвращается прежняя", Prefs.K_QUIET_RINGER)
     }
 
     private fun buildWords(col: LinearLayout) {
