@@ -15,8 +15,6 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <queries>
         <intent>
@@ -87,12 +85,6 @@
             android:turnScreenOn="true"
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode" />
-
-        <!-- Постоянное прослушивание слова-активатора («Абобус, позвони маме») -->
-        <service
-            android:name=".WakeService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
 
         <!-- Служба звонков: Android включает её только на время звонка -->
         <service

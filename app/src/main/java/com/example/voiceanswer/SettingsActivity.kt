@@ -122,12 +122,6 @@ class SettingsActivity : BaseActivity() {
         }
         sw.setOnCheckedChangeListener { _, v ->
             Prefs.set(a, key, v)
-            if (key == Prefs.K_WAKE) {
-                if (v && !Perms.has(a, Manifest.permission.RECORD_AUDIO)) {
-                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 4)
-                }
-                WakeService.sync(a)
-            }
         }
         row.addView(sw)
         row.setOnClickListener { sw.toggle() }
@@ -161,13 +155,12 @@ class SettingsActivity : BaseActivity() {
         buildStatus(col)
         buildVoice(col)
         buildWords(col)
-        buildWake(col)
         buildRecording(col)
         buildTest(col)
         buildLook(col)
         buildHelp(col)
 
-        val about = Ui.text(a, "Голосовой телефон 3.13", 13f, Theme.sub)
+        val about = Ui.text(a, "Голосовой телефон 3.14", 13f, Theme.sub)
         about.gravity = Gravity.CENTER
         col.addView(about, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
@@ -206,7 +199,6 @@ class SettingsActivity : BaseActivity() {
         switchRow(c, "Громкая связь после ответа голосом", "Когда вы сказали «принять»", Prefs.K_SPEAKER_VOICE)
         switchRow(c, "Громкая связь после ответа кнопкой", "Когда ответили пальцем на экране", Prefs.K_SPEAKER_BUTTON)
         switchRow(c, "Чёткий голос", "Включать микрофон и шумоподавление в начале разговора (если телефон это поддерживает)", Prefs.K_CLEAR_VOICE)
-        switchRow(c, "Громкость на максимум", "На громкой связи ставить громкость разговора 100%", Prefs.K_MAX_VOLUME)
         switchRow(c, "Если подключены наушники", "Говорить через наушники, динамик не включать", Prefs.K_HEADSET_FIRST)
         switchRow(c, "Слушать команды через наушники", "Bluetooth-наушники: микрофон наушников (по возможности)", Prefs.K_HEADSET_MIC)
         switchRow(c, "Тихий рингтон", "Приглушать мелодию, чтобы лучше слышать голос", Prefs.K_QUIET_RINGER)
@@ -284,45 +276,6 @@ class SettingsActivity : BaseActivity() {
         row.addView(input, Ui.lp(0, Ui.WRAP, 1f))
         row.addView(pill("Добавить") { add() }, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), Ui.dp(a, 8), 0, 0, 0))
         parent.addView(row, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 10), 0, 0))
-    }
-
-    private fun buildWake(col: LinearLayout) {
-        val a = this
-        val c = card(
-            col, "Голосовой набор без рук",
-            "Скажите слово-активатор и команду: «" + Prefs.wakeWord(a) + ", позвони маме» — телефон сам позвонит, даже при заблокированном экране."
-        )
-        switchRow(c, "Всегда слушать слово-активатор", "Работает в фоне. Android показывает при этом маленький значок микрофона — скрыть его нельзя", Prefs.K_WAKE)
-        switchRow(c, "Слушать и во время музыки и видео", "Выключено: пока играет TikTok, YouTube или музыка, микрофон не используется (так он не мигает)", Prefs.K_WAKE_MEDIA)
-        label(c, "СЛОВО-АКТИВАТОР")
-        val row = LinearLayout(a)
-        row.gravity = Gravity.CENTER_VERTICAL
-        val input = EditText(a)
-        input.setText(Prefs.wakeWord(a))
-        input.setTextColor(Theme.text)
-        input.setHintTextColor(Theme.sub)
-        input.hint = "Например: абобус"
-        input.isSingleLine = true
-        input.textSize = 16f
-        input.background = Ui.rounded(Theme.card2, Ui.dpf(a, 18f))
-        input.setPadding(Ui.dp(a, 16), Ui.dp(a, 11), Ui.dp(a, 16), Ui.dp(a, 11))
-        row.addView(input, Ui.lp(0, Ui.WRAP, 1f))
-        row.addView(pill("Сохранить") {
-            val w = Logic.cleanWord(input.text.toString())
-            if (w.isEmpty()) {
-                Toast.makeText(a, "Введите слово", Toast.LENGTH_SHORT).show()
-            } else {
-                Prefs.setWakeWord(a, w)
-                WakeService.sync(a)
-                Toast.makeText(a, "Теперь: «$w, позвони …»", Toast.LENGTH_SHORT).show()
-                rebuild()
-            }
-        }, Ui.margins(Ui.lp(Ui.WRAP, Ui.WRAP), Ui.dp(a, 8), 0, 0, 0))
-        c.addView(row, Ui.lp(Ui.MATCH, Ui.WRAP))
-        c.addView(
-            Ui.text(a, "Лучше выбрать необычное слово, чтобы телефон не звонил случайно. Команды: «позвони», «набери», «вызови» + имя из контактов.", 13f, Theme.sub),
-            Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 8), 0, 0)
-        )
     }
 
     private fun buildRecording(col: LinearLayout) {

@@ -29,7 +29,7 @@ object Prefs {
     fun voiceEnabled(c: Context) = flag(c, K_VOICE, true)
     fun speakerOnVoice(c: Context) = flag(c, K_SPEAKER_VOICE, true)
     fun speakerOnButton(c: Context) = flag(c, K_SPEAKER_BUTTON, false)
-    fun maxVolume(c: Context) = flag(c, K_MAX_VOLUME, true)
+    fun maxVolume(c: Context) = false // функция убрана
     fun headsetFirst(c: Context) = flag(c, K_HEADSET_FIRST, true)
     fun headsetMic(c: Context) = flag(c, K_HEADSET_MIC, true)
     fun announce(c: Context) = flag(c, K_ANNOUNCE, true)
