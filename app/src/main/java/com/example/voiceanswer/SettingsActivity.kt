@@ -160,7 +160,7 @@ class SettingsActivity : BaseActivity() {
         buildLook(col)
         buildHelp(col)
 
-        val about = Ui.text(a, "Голосовой телефон 3.18", 13f, Theme.sub)
+        val about = Ui.text(a, "Голосовой телефон 3.19", 13f, Theme.sub)
         about.gravity = Gravity.CENTER
         col.addView(about, Ui.margins(Ui.lp(Ui.MATCH, Ui.WRAP), 0, Ui.dp(a, 20), 0, 0))
 
@@ -285,7 +285,6 @@ class SettingsActivity : BaseActivity() {
             "Android не даёт приложениям записывать голос собеседника напрямую. Если телефон не разрешает — пишется через микрофон на громкой связи."
         )
         switchRow(c, "Автозапись", "Начинать запись сразу, как только разговор начался", Prefs.K_AUTO_REC)
-        switchRow(c, "Громкая связь при записи с микрофона", "Чтобы собеседника было слышно в записи (без наушников)", Prefs.K_REC_SPEAKER)
         label(c, "АВТОЗАПИСЬ ИДЁТ НЕ БОЛЬШЕ")
         val opts = listOf(0 to "Без ограничения", 60 to "1 мин", 300 to "5 мин", 600 to "10 мин", 1800 to "30 мин", 3600 to "1 час")
         val flow = FlowLayout(a)

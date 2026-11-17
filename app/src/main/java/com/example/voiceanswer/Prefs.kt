@@ -56,7 +56,13 @@ object Prefs {
     fun setRecMaxSeconds(c: Context, s: Int) = p(c).edit().putInt("rec_max", s).apply()
 
     /** Причина, по которой запись на этом телефоне не работает (null — работает). */
-    fun recBroken(c: Context): String? = p(c).getString("rec_broken", null)
+    fun recBroken(c: Context): String? {
+        // в прежних версиях запись могла быть ошибочно помечена как неработающая — один раз сбрасываем
+        if (!p(c).getBoolean("rec_fix_done", false)) {
+            p(c).edit().putBoolean("rec_fix_done", true).remove("rec_broken").remove("rec_fail").apply()
+        }
+        return p(c).getString("rec_broken", null)
+    }
     fun setRecBroken(c: Context, why: String?) {
         if (why == null) p(c).edit().remove("rec_broken").apply() else p(c).edit().putString("rec_broken", why).apply()
     }

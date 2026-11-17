@@ -182,7 +182,7 @@ object Recorder {
                 toast(ctx, "Запись остановлена по таймеру")
                 return
             }
-            if (!sawSound && elapsed >= 8000) {
+            if (!sawSound && usedCallSource && elapsed >= 6000) {
                 onSilent(ctx)
                 return
             }
@@ -192,24 +192,32 @@ object Recorder {
 
     /** За 8 секунд не было ни единого звука: источник не работает. */
     private fun onSilent(ctx: Context) {
-        val wasCallSource = usedCallSource
         val w = who
         val n = number
         val a = auto
         discard(ctx)
-        if (wasCallSource) {
-            // «Запись вызова» дала тишину — пробуем микрофон
-            val err = begin(ctx, w, n, a, true)
-            if (err == null) return
+        // «Запись вызова» дала тишину — переходим на микрофон
+        val err = begin(ctx, w, n, a, true)
+        if (err != null) toast(ctx, err)
+    }
+
+    /** В прежних версиях запись могла быть ошибочно помечена как «неработающая» — один раз сбрасываем. */
+    private fun fixOldFlag(ctx: Context) {
+        try {
+            val sp = ctx.applicationContext.getSharedPreferences("voice_answer", Context.MODE_PRIVATE)
+            if (!sp.getBoolean("rec_fix_done", false)) {
+                sp.edit().putBoolean("rec_fix_done", true).remove("rec_broken").remove("rec_fail").apply()
+            }
+        } catch (_: Exception) {
         }
-        Prefs.setRecBroken(ctx, "Телефон записывает тишину")
-        toast(ctx, "Этот телефон не даёт записывать разговор. Кнопка записи отключена.")
     }
 
     /** Возвращает null, если запись началась, иначе — текст ошибки. */
     fun start(ctx: Context, who: String, number: String, auto: Boolean): String? {
         if (rec != null) return null
-        if (Prefs.recBroken(ctx) != null) return "Запись недоступна: " + Prefs.recBroken(ctx)
+        fixOldFlag(ctx)
+        val broken = Prefs.recBroken(ctx)
+        if (broken != null) return "Запись недоступна: $broken"
         return begin(ctx, who, number, auto, false)
     }
 
@@ -239,8 +247,8 @@ object Recorder {
             return "Не удалось создать файл записи"
         }
 
-        val sources = if (forceMic) intArrayOf(MediaRecorder.AudioSource.MIC)
-        else intArrayOf(MediaRecorder.AudioSource.VOICE_CALL, MediaRecorder.AudioSource.MIC)
+        val sources = if (forceMic) intArrayOf(MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+        else intArrayOf(MediaRecorder.AudioSource.VOICE_CALL, MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_COMMUNICATION)
         var lastError = "Телефон не разрешает запись"
         for (src in sources) {
             val r = newRecorder(appCtx)
@@ -264,7 +272,9 @@ object Recorder {
                 startedAtMono = SystemClock.elapsedRealtime()
                 handler.removeCallbacks(tick)
                 handler.postDelayed(tick, 1000)
-                if (!usedCallSource && Calls.headsetKind(appCtx) == Calls.Headset.NONE && Prefs.recSpeaker(appCtx)) {
+                val sp = appCtx.getSharedPreferences("voice_answer", Context.MODE_PRIVATE)
+                sp.edit().putInt("rec_fail", 0).remove("rec_broken").apply()
+                if (!usedCallSource && Calls.headsetKind(appCtx) == Calls.Headset.NONE) {
                     Calls.setSpeaker(true, appCtx)
                     toast(appCtx, "Запись идёт через микрофон — включена громкая связь, чтобы слышать собеседника")
                 }
@@ -279,10 +289,11 @@ object Recorder {
             }
         }
         cleanup(appCtx, false)
-        if (!forceMic) {
-            // не заработало ни «запись вызова», ни микрофон — телефон запись не поддерживает
-            Prefs.setRecBroken(appCtx, "Телефон не разрешает запись")
-        }
+        // кнопка станет серой только если запись не стартовала три раза подряд
+        val sp = appCtx.getSharedPreferences("voice_answer", Context.MODE_PRIVATE)
+        val fails = sp.getInt("rec_fail", 0) + 1
+        sp.edit().putInt("rec_fail", fails).apply()
+        if (fails >= 3) Prefs.setRecBroken(appCtx, "телефон не даёт начать запись")
         return lastError
     }
 
@@ -303,7 +314,8 @@ object Recorder {
             r.release()
         } catch (_: Exception) {
         }
-        if (!ok || seconds < 2) {
+        // даже если stop() пожаловался, но файл не пустой — сохраняем
+        if (seconds < 2 || (!ok && size() <= 1024)) {
             cleanup(appCtx, false)
             return
         }
@@ -314,6 +326,14 @@ object Recorder {
         cleanup(appCtx, true)
         RecLog.add(appCtx, entry)
         toast(appCtx, "Запись сохранена (" + Logic.formatDuration(seconds.toLong()) + ")")
+    }
+
+    private fun size(): Long = try {
+        val c = app
+        val u = uri
+        if (u != null && c != null) c.contentResolver.openAssetFileDescriptor(u, "r")?.use { it.length } ?: 0L else file?.length() ?: 0L
+    } catch (e: Exception) {
+        0L
     }
 
     /** Остановить и выбросить запись без сохранения. */
