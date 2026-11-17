@@ -65,9 +65,8 @@ class VoiceListener(
         private set
 
     companion object {
-        private val BEEP_STREAMS = intArrayOf(
-            AudioManager.STREAM_MUSIC, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM
-        )
+        // только музыка: на многих телефонах каналы звонка и уведомлений связаны, и их глушение отключало рингтон
+        private val BEEP_STREAMS = intArrayOf(AudioManager.STREAM_MUSIC)
 
         private fun unmuteAll(ctx: Context, streams: Set<Int>) {
             val am = ctx.getSystemService(AudioManager::class.java)
@@ -79,8 +78,27 @@ class VoiceListener(
             }
         }
 
+        /** Версии 3.6–3.16 могли оставить звонок и уведомления заглушёнными — один раз возвращаем звук. */
+        private fun fixOldMute(ctx: Context) {
+            try {
+                val sp = ctx.getSharedPreferences("voice_answer", Context.MODE_PRIVATE)
+                if (sp.getBoolean("ring_fix_done", false)) return
+                sp.edit().putBoolean("ring_fix_done", true).apply()
+                val am = ctx.getSystemService(AudioManager::class.java)
+                if (am.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+                for (st in intArrayOf(AudioManager.STREAM_RING, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM)) {
+                    try {
+                        if (am.isStreamMute(st)) am.adjustStreamVolume(st, AudioManager.ADJUST_UNMUTE, 0)
+                    } catch (_: Exception) {
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
         /** Если приложение убили во время прослушивания, звук мог остаться выключенным — возвращаем. */
         fun restoreSound(ctx: Context) {
+            fixOldMute(ctx)
             val left = Prefs.beepMuted(ctx)
             if (left.isEmpty()) return
             unmuteAll(ctx.applicationContext, left)
