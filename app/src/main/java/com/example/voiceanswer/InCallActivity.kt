@@ -296,11 +296,14 @@ class InCallActivity : BaseActivity(), Calls.Listener {
 
         // Закреплённый низ: кнопки всегда на экране
         val bottom = FrameLayout(a)
-        bottom.setPadding(Ui.dp(a, 24), Ui.dp(a, 6), Ui.dp(a, 24), Ui.dp(a, 18))
+        bottom.setPadding(Ui.dp(a, 24), Ui.dp(a, 14), Ui.dp(a, 24), Ui.dp(a, 18))
+        bottom.clipChildren = false
+        bottom.clipToPadding = false
 
         ringButtons = LinearLayout(a)
         ringButtons.orientation = LinearLayout.HORIZONTAL
         ringButtons.gravity = Gravity.CENTER
+        ringButtons.clipChildren = false
         val decline = bigAction(R.drawable.ic_call_end, Theme.RED, "Отклонить") { Calls.reject() }
         val accept = bigAction(R.drawable.ic_call, Theme.GREEN, "Принять") { Calls.answer(a, false) }
         acceptBtn = accept.getChildAt(0)
@@ -310,6 +313,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
 
         endBox = bigAction(R.drawable.ic_call_end, Theme.RED, "") { Calls.hangup() }
         bottom.addView(endBox, FrameLayout.LayoutParams(Ui.WRAP, Ui.WRAP, Gravity.CENTER_HORIZONTAL))
+        outer.clipChildren = false
         outer.addView(bottom, Ui.lp(Ui.MATCH, Ui.WRAP))
 
         setContentView(root)
@@ -331,6 +335,7 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         val box = LinearLayout(a)
         box.orientation = LinearLayout.VERTICAL
         box.gravity = Gravity.CENTER_HORIZONTAL
+        box.clipChildren = false
         val size = if (sc < 0.8f) 66 else 76
         val btn = Ui.roundButton(a, size, Ui.oval(color), iconRes, Color.WHITE, 34)
         btn.setOnClickListener { onClick() }
@@ -535,8 +540,8 @@ class InCallActivity : BaseActivity(), Calls.Listener {
         if (pulseAnim != null) return
         val anim = ObjectAnimator.ofPropertyValuesHolder(
             acceptBtn,
-            PropertyValuesHolder.ofFloat("scaleX", 1f, 1.14f),
-            PropertyValuesHolder.ofFloat("scaleY", 1f, 1.14f)
+            PropertyValuesHolder.ofFloat("scaleX", 1f, 1.1f),
+            PropertyValuesHolder.ofFloat("scaleY", 1f, 1.1f)
         )
         anim.duration = 650
         anim.repeatCount = ValueAnimator.INFINITE
